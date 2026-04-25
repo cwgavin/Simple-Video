@@ -306,44 +306,49 @@ struct FilePickerRow: View {
 
     @State private var isDropTarget = false
 
+    private var displayName: String {
+        path.isEmpty ? "" : (path as NSString).lastPathComponent
+    }
+
     var body: some View {
         HStack {
             Text(label).frame(width: formLabelWidth, alignment: .trailing)
-            Text(path.isEmpty ? "No file selected — drag a file here or click Browse"
-                              : (path as NSString).lastPathComponent)
-                .foregroundColor(path.isEmpty ? .secondary : .primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isDropTarget ? Color.accentColor.opacity(0.15) : Color.clear)
-                )
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(isDropTarget ? Color.accentColor
-                                                   : Color.secondary.opacity(0.3),
-                                      lineWidth: isDropTarget ? 1.5 : 1)
-                )
-                .help(path.isEmpty ? "" : path)
-                .onDrop(of: [UTType.fileURL], isTargeted: $isDropTarget) { providers in
-                    guard let p = providers.first else { return false }
-                    _ = p.loadObject(ofClass: URL.self) { url, _ in
-                        if let u = url {
-                            DispatchQueue.main.async { self.path = u.path }
-                        }
-                    }
-                    return true
+            ZStack(alignment: .leading) {
+                TextField("", text: .constant(displayName))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(true)
+                    .frame(maxWidth: .infinity)
+                    .help(path.isEmpty ? "" : path)
+
+                if displayName.isEmpty {
+                    Text("No file selected — drag a file here or click Browse")
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 6)
+                        .allowsHitTesting(false)
                 }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(isDropTarget ? Color.accentColor : .clear, lineWidth: 1.5)
+            )
+            .onDrop(of: [UTType.fileURL], isTargeted: $isDropTarget) { providers in
+                guard let p = providers.first else { return false }
+                _ = p.loadObject(ofClass: URL.self) { url, _ in
+                    if let u = url {
+                        DispatchQueue.main.async { self.path = u.path }
+                    }
+                }
+                return true
+            }
             Button("Browse…") {
                 if let p = save ? Files.saveFile(suggested: suggested)
                                 : Files.openFile(types: types) {
                     path = p
                 }
             }
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -371,7 +376,9 @@ struct OutputHintRow: View {
                 }
                 .help("Reveal in Finder")
                 .buttonStyle(.borderless)
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -678,6 +685,7 @@ struct LabeledField: View {
             TextField("", text: $text).textFieldStyle(.roundedBorder).frame(maxWidth: 300)
             Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
