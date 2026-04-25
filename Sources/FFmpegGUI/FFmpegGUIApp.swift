@@ -295,6 +295,8 @@ func inputExt(_ path: String) -> String {
     return e.isEmpty ? "mp4" : e
 }
 
+private let formLabelWidth: CGFloat = 160
+
 struct FilePickerRow: View {
     let label: String
     @Binding var path: String
@@ -306,7 +308,7 @@ struct FilePickerRow: View {
 
     var body: some View {
         HStack {
-            Text(label).frame(width: 130, alignment: .trailing)
+            Text(label).frame(width: formLabelWidth, alignment: .leading)
             Text(path.isEmpty ? "No file selected — drag a file here or click Browse"
                               : (path as NSString).lastPathComponent)
                 .foregroundColor(path.isEmpty ? .secondary : .primary)
@@ -352,7 +354,7 @@ struct OutputHintRow: View {
     var body: some View {
         if !path.isEmpty {
             HStack {
-                Text("Output →").frame(width: 130, alignment: .trailing)
+                Text("Output →").frame(width: formLabelWidth, alignment: .leading)
                     .foregroundColor(.secondary)
                 Text(path)
                     .font(.system(.caption, design: .monospaced))
@@ -416,7 +418,7 @@ struct ConvertView: View {
         Form {
             FilePickerRow(label: "Input video:", path: $input)
             HStack {
-                Text("Output format:").frame(width: 130, alignment: .trailing)
+                Text("Output format:").frame(width: formLabelWidth, alignment: .leading)
                 Picker("format", selection: $format) {
                     ForEach(videoFormats, id: \.self) { Text(".\($0)").tag($0) }
                 }.labelsHidden().frame(width: 200)
@@ -456,7 +458,7 @@ struct ExtractAudioView: View {
         Form {
             FilePickerRow(label: "Input video:", path: $input)
             HStack {
-                Text("Audio codec:").frame(width: 130, alignment: .trailing)
+                Text("Audio codec:").frame(width: formLabelWidth, alignment: .leading)
                 Picker("codec", selection: $codec) {
                     ForEach(codecs, id: \.self) { Text($0) }
                 }.labelsHidden().frame(width: 200)
@@ -559,12 +561,12 @@ struct CompressView: View {
         Form {
             FilePickerRow(label: "Input video:", path: $input)
             HStack {
-                Text("CRF: \(Int(crf))").frame(width: 130, alignment: .trailing)
+                Text("CRF: \(Int(crf))").frame(width: formLabelWidth, alignment: .leading)
                 Slider(value: $crf, in: 0...51, step: 1).frame(maxWidth: 300)
                 Spacer()
             }
             HStack {
-                Text("Preset:").frame(width: 130, alignment: .trailing)
+                Text("Preset:").frame(width: formLabelWidth, alignment: .leading)
                 Picker("preset", selection: $preset) {
                     ForEach(presets, id: \.self) { Text($0) }
                 }.labelsHidden().frame(width: 200)
@@ -672,7 +674,7 @@ struct LabeledField: View {
     @Binding var text: String
     var body: some View {
         HStack {
-            Text(label).frame(width: 130, alignment: .trailing)
+            Text(label).frame(width: formLabelWidth, alignment: .leading)
             TextField("", text: $text).textFieldStyle(.roundedBorder).frame(maxWidth: 300)
             Spacer()
         }
