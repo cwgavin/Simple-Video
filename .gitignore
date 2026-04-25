@@ -1,0 +1,5 @@
+.DS_Store
+.build/
+FFmpeg GUI.app/
+*.xcodeproj/
+Package.resolved
