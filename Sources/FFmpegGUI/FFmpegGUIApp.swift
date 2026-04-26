@@ -612,6 +612,7 @@ struct ConcatView: View {
     @State private var mediaType = "Video"
     @State private var files: [String] = []
     @State private var completedOutput = ""
+    @State private var isDropTarget = false
 
     private let mediaTypes = ["Video", "Audio"]
 
@@ -630,6 +631,20 @@ struct ConcatView: View {
         if panel.runModal() == .OK {
             files.append(contentsOf: panel.urls.map(\.path))
         }
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        let allowed = contentTypes
+        for provider in providers {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let u = url, u.isFileURL else { return }
+                let values = try? u.resourceValues(forKeys: [.contentTypeKey])
+                guard let ct = values?.contentType,
+                      allowed.contains(where: { ct.conforms(to: $0) }) else { return }
+                DispatchQueue.main.async { files.append(u.path) }
+            }
+        }
+        return true
     }
 
     var body: some View {
@@ -655,38 +670,55 @@ struct ConcatView: View {
                     .disabled(files.isEmpty)
             }
 
-            if !files.isEmpty {
-                HStack(alignment: .top) {
-                    Spacer().frame(width: formLabelWidth)
-                    List {
-                        ForEach(Array(files.enumerated()), id: \.offset) { i, file in
-                            HStack {
-                                Text("\(i + 1).")
-                                    .foregroundColor(.secondary)
-                                    .frame(width: 24, alignment: .trailing)
-                                Text((file as NSString).lastPathComponent)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .help(file)
-                                Spacer()
-                                Button {
-                                    files.remove(at: i)
-                                    completedOutput = ""
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
+            HStack(alignment: .top) {
+                Spacer().frame(width: formLabelWidth)
+                Group {
+                    if files.isEmpty {
+                        VStack {
+                            Spacer()
+                            Text("Drop files here or double-click to add")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 80)
+                    } else {
+                        List {
+                            ForEach(Array(files.enumerated()), id: \.offset) { i, file in
+                                HStack {
+                                    Text("\(i + 1).")
                                         .foregroundColor(.secondary)
+                                        .frame(width: 24, alignment: .trailing)
+                                    Text((file as NSString).lastPathComponent)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .help(file)
+                                    Spacer()
+                                    Button {
+                                        files.remove(at: i)
+                                        completedOutput = ""
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .buttonStyle(.borderless)
                                 }
-                                .buttonStyle(.borderless)
+                            }
+                            .onMove { from, to in
+                                files.move(fromOffsets: from, toOffset: to)
+                                completedOutput = ""
                             }
                         }
-                        .onMove { from, to in
-                            files.move(fromOffsets: from, toOffset: to)
-                            completedOutput = ""
-                        }
+                        .frame(maxHeight: 160)
                     }
-                    .frame(maxHeight: 160)
-                    .cornerRadius(6)
                 }
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(isDropTarget ? Color.accentColor : Color.secondary.opacity(files.isEmpty ? 0.3 : 0),
+                                      style: files.isEmpty && !isDropTarget ? StrokeStyle(lineWidth: 1, dash: [5]) : StrokeStyle(lineWidth: 1.5))
+                )
+                .onTapGesture(count: 2) { addFiles() }
+                .onDrop(of: [UTType.fileURL], isTargeted: $isDropTarget, perform: handleDrop)
             }
 
             OutputHintRow(path: completedOutput)
