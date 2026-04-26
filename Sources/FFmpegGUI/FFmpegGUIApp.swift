@@ -609,15 +609,24 @@ struct MergeAVView: View {
 
 struct ConcatView: View {
     @EnvironmentObject var runner: FFmpegRunner
+    @State private var mediaType = "Video"
     @State private var files: [String] = []
     @State private var completedOutput = ""
+
+    private let mediaTypes = ["Video", "Audio"]
+
+    private var contentTypes: [UTType] {
+        mediaType == "Video"
+            ? [.movie, .video]
+            : [.audio]
+    }
 
     private func addFiles() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [.movie, .audiovisualContent]
+        panel.allowedContentTypes = contentTypes
         if panel.runModal() == .OK {
             files.append(contentsOf: panel.urls.map(\.path))
         }
@@ -625,8 +634,19 @@ struct ConcatView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Type:").frame(width: formLabelWidth, alignment: .trailing)
+                Picker("type", selection: $mediaType) {
+                    ForEach(mediaTypes, id: \.self) { Text($0) }
+                }
+                .labelsHidden()
+                .pickerStyle(.radioGroup)
+                .horizontalRadioGroupLayout()
+                .fixedSize()
+                Spacer()
+            }
             HStack {
-                Text("Videos:").frame(width: formLabelWidth, alignment: .trailing)
+                Text("Files:").frame(width: formLabelWidth, alignment: .trailing)
                 Text("\(files.count) file\(files.count == 1 ? "" : "s") added")
                     .foregroundColor(.secondary)
                 Spacer()
@@ -671,21 +691,66 @@ struct ConcatView: View {
 
             OutputHintRow(path: completedOutput)
             RunButton(canRun: files.count >= 2) {
-                // Write a temporary concat list file for ffmpeg's concat demuxer.
-                let tmp = NSTemporaryDirectory() + "ffmpeg-gui-concat-\(ProcessInfo.processInfo.globallyUniqueString).txt"
-                let listing = files.map { "file '\($0.replacingOccurrences(of: "'", with: "'\\''"))'" }
-                    .joined(separator: "\n")
-                try? listing.write(toFile: tmp, atomically: true, encoding: .utf8)
+                let exts = Set(files.map { inputExt($0).lowercased() })
+                let mixed = exts.count > 1
 
-                let out = makeOutputPath(input: files[0], ext: inputExt(files[0]))
-                runner.run(
-                    args: ["-f", "concat", "-safe", "0", "-i", tmp,
-                           "-c", "copy", "-y", out],
-                    inputForDuration: nil
-                ) { completedOutput = $0; try? FileManager.default.removeItem(atPath: tmp) }
+                if mixed {
+                    let alert = NSAlert()
+                    alert.messageText = "Mixed formats detected"
+                    alert.informativeText = "The selected files have different formats (\(exts.sorted().joined(separator: ", "))). " +
+                        "They will be re-encoded to a common format, which is slower than stream copy."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "Re-encode & Continue")
+                    alert.addButton(withTitle: "Cancel")
+                    guard alert.runModal() == .alertFirstButtonReturn else { return }
+                }
+
+                if mixed {
+                    // Use the concat *filter* for mixed formats — the concat
+                    // demuxer can't handle heterogeneous codecs/sample-rates.
+                    var args: [String] = []
+                    for f in files { args += ["-i", f] }
+
+                    let n = files.count
+                    if mediaType == "Video" {
+                        let inputs = (0..<n).map { "[\($0):v][\($0):a]" }.joined()
+                        let filter = "\(inputs)concat=n=\(n):v=1:a=1[outv][outa]"
+                        let out = makeOutputPath(input: files[0], ext: "mp4")
+                        args += ["-filter_complex", filter,
+                                 "-map", "[outv]", "-map", "[outa]",
+                                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                                 "-c:a", "aac", "-b:a", "192k", "-y", out]
+                    } else {
+                        let inputs = (0..<n).map { "[\($0):a]" }.joined()
+                        let filter = "\(inputs)concat=n=\(n):v=0:a=1[outa]"
+                        let out = makeOutputPath(input: files[0], ext: "m4a")
+                        args += ["-filter_complex", filter,
+                                 "-map", "[outa]",
+                                 "-c:a", "aac", "-b:a", "192k", "-y", out]
+                    }
+
+                    runner.run(args: args, inputForDuration: nil) { completedOutput = $0 }
+                } else {
+                    // Same format — use the concat demuxer with stream copy (fast).
+                    let tmp = NSTemporaryDirectory() + "ffmpeg-gui-concat-\(ProcessInfo.processInfo.globallyUniqueString).txt"
+                    let listing = files.map { "file '\($0.replacingOccurrences(of: "'", with: "'\\''"))'" }
+                        .joined(separator: "\n")
+                    try? listing.write(toFile: tmp, atomically: true, encoding: .utf8)
+
+                    let out = makeOutputPath(input: files[0], ext: inputExt(files[0]))
+                    runner.run(
+                        args: ["-f", "concat", "-safe", "0", "-i", tmp,
+                               "-c", "copy", "-y", out],
+                        inputForDuration: nil
+                    ) {
+                        completedOutput = $0
+                        try? FileManager.default.removeItem(atPath: tmp)
+                    }
+                }
             }
         }
         .padding()
+        .onChange(of: mediaType) { _, _ in files.removeAll(); completedOutput = "" }
     }
 }
 
