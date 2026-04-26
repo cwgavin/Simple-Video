@@ -361,6 +361,12 @@ struct FilePickerRow: View {
         path.isEmpty ? "" : (path as NSString).lastPathComponent
     }
 
+    private func browse() {
+        if let p = Files.openFile(contentTypes: contentTypes) {
+            path = p
+        }
+    }
+
     var body: some View {
         HStack {
             Text(label).frame(width: formLabelWidth, alignment: .trailing)
@@ -371,6 +377,8 @@ struct FilePickerRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { browse() }
                     .background(
                         RoundedRectangle(cornerRadius: 5)
                             .stroke(Color(nsColor: .separatorColor))
@@ -392,8 +400,6 @@ struct FilePickerRow: View {
                 guard let p = providers.first else { return false }
                 _ = p.loadObject(ofClass: URL.self) { url, _ in
                     guard let u = url, u.isFileURL else { return }
-                    // If the row was configured with allowed UTTypes, reject
-                    // drops of unrelated kinds (folders, .app bundles, etc.).
                     if !contentTypes.isEmpty {
                         let values = try? u.resourceValues(forKeys: [.contentTypeKey])
                         guard let ct = values?.contentType,
@@ -405,26 +411,24 @@ struct FilePickerRow: View {
                 }
                 return true
             }
-            Button("Browse…") {
-                if let p = Files.openFile(contentTypes: contentTypes) {
-                    path = p
-                }
-            }
+            Button("Browse…") { browse() }
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// Read-only display showing where the output was written. Only visible after
-/// a successful run. Cleared by the parent view whenever an input changes.
+/// Always-visible output row. The label is always shown; the path and
+/// Reveal button only appear after a successful run.
 struct OutputHintRow: View {
     let path: String
     var body: some View {
-        if !path.isEmpty {
-            HStack {
-                Text("Output →").frame(width: formLabelWidth, alignment: .trailing)
-                    .foregroundColor(.secondary)
+        HStack {
+            Text("Output →").frame(width: formLabelWidth, alignment: .trailing)
+                .foregroundColor(.secondary)
+            if path.isEmpty {
+                Spacer()
+            } else {
                 Text(path)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundColor(.green)
@@ -442,8 +446,8 @@ struct OutputHintRow: View {
                 .buttonStyle(.borderless)
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
