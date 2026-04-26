@@ -363,10 +363,16 @@ struct FilePickerRow: View {
         HStack {
             Text(label).frame(width: formLabelWidth, alignment: .trailing)
             ZStack(alignment: .leading) {
-                TextField("", text: .constant(displayName))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(true)
-                    .frame(maxWidth: .infinity)
+                Text(displayName)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(Color(nsColor: .separatorColor))
+                    )
                     .help(path.isEmpty ? "" : path)
 
                 if displayName.isEmpty {
