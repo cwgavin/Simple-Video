@@ -20,14 +20,16 @@ struct FFmpegGUIApp: App {
 enum FFTask: String, CaseIterable, Identifiable, Hashable {
     case mergeAV = "Merge A/V"
     case convert = "Convert Video"
+    case convertAudio = "Convert Audio"
 
     var id: String { rawValue }
     var title: String { rawValue }
 
     var icon: String {
         switch self {
-        case .mergeAV: return "plus.square.on.square"
-        case .convert: return "arrow.triangle.2.circlepath"
+        case .mergeAV:       return "plus.square.on.square"
+        case .convert:       return "arrow.triangle.2.circlepath"
+        case .convertAudio:  return "waveform"
         }
     }
 }
@@ -510,6 +512,65 @@ struct ConvertView: View {
 }
 
 
+struct ConvertAudioView: View {
+    @EnvironmentObject var runner: FFmpegRunner
+    @State private var input = ""
+    @State private var format = "mp3"
+    @State private var completedOutput = ""
+
+    let audioFormats = ["mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff"]
+
+    private func ffmpegArgs(input: String, output: String) -> [String] {
+        switch format {
+        case "mp3":
+            return ["-i", input, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", "-y", output]
+        case "aac":
+            return ["-i", input, "-vn", "-c:a", "aac", "-b:a", "192k", "-y", output]
+        case "m4a":
+            return ["-i", input, "-vn", "-c:a", "aac", "-b:a", "192k", "-y", output]
+        case "flac":
+            return ["-i", input, "-vn", "-c:a", "flac", "-y", output]
+        case "wav":
+            return ["-i", input, "-vn", "-c:a", "pcm_s16le", "-y", output]
+        case "ogg":
+            return ["-i", input, "-vn", "-c:a", "libvorbis", "-q:a", "5", "-y", output]
+        case "opus":
+            return ["-i", input, "-vn", "-c:a", "libopus", "-b:a", "128k", "-y", output]
+        case "wma":
+            return ["-i", input, "-vn", "-c:a", "wmav2", "-b:a", "192k", "-y", output]
+        case "aiff":
+            return ["-i", input, "-vn", "-c:a", "pcm_s16be", "-y", output]
+        default:
+            return ["-i", input, "-vn", "-y", output]
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Spacer()
+            FilePickerRow(label: "Input audio:", path: $input, contentTypes: [.audio, .movie, .audiovisualContent])
+            HStack {
+                Text("Output format:").frame(width: formLabelWidth, alignment: .trailing)
+                Picker("format", selection: $format) {
+                    ForEach(audioFormats, id: \.self) { Text(".\($0)").tag($0) }
+                }.labelsHidden().fixedSize()
+                Spacer()
+            }
+            OutputHintRow(path: completedOutput)
+            RunButton(canRun: !input.isEmpty) {
+                let out = makeOutputPath(input: input, ext: format)
+                runner.run(args: ffmpegArgs(input: input, output: out),
+                           inputForDuration: input) { completedOutput = $0 }
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+        .onChange(of: input)  { _, _ in completedOutput = "" }
+        .onChange(of: format) { _, _ in completedOutput = "" }
+    }
+}
+
 struct MergeAVView: View {
     @EnvironmentObject var runner: FFmpegRunner
     @State private var video = ""
@@ -567,8 +628,9 @@ struct ContentView: View {
     @ViewBuilder
     private func detail(for task: FFTask) -> some View {
         switch task {
-        case .mergeAV: MergeAVView()
-        case .convert: ConvertView()
+        case .mergeAV:      MergeAVView()
+        case .convert:      ConvertView()
+        case .convertAudio: ConvertAudioView()
         }
     }
 
