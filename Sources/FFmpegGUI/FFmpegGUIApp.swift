@@ -6,6 +6,13 @@ import UniformTypeIdentifiers
 
 @main
 struct FFmpegGUIApp: App {
+    init() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil, queue: .main
+        ) { _ in FFmpegRunner.terminateAll() }
+    }
+
     var body: some Scene {
         WindowGroup("FFmpeg GUI") {
             ContentView()
@@ -22,6 +29,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
     case concat = "Concatenate"
     case convert = "Convert Video"
     case convertAudio = "Convert Audio"
+    case transcribe = "Transcribe"
 
     var id: String { rawValue }
     var title: String { rawValue }
@@ -32,6 +40,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
         case .concat:        return "text.line.first.and.arrowtriangle.forward"
         case .convert:       return "arrow.triangle.2.circlepath"
         case .convertAudio:  return "waveform"
+        case .transcribe:    return "text.bubble"
         }
     }
 }
@@ -50,6 +59,30 @@ final class FFmpegRunner: ObservableObject {
     private var pendingOutput: String = ""
     private var pendingSuccess: ((String) -> Void)?
     private var stderrBuffer: Data = Data()
+
+    /// All subprocesses launched by the app, for cleanup on quit.
+    nonisolated(unsafe) private static var trackedProcesses: [Int32: Process] = [:]
+    nonisolated(unsafe) private static let processLock = NSLock()
+
+    nonisolated static func trackProcess(_ p: Process) {
+        processLock.lock()
+        trackedProcesses[p.processIdentifier] = p
+        processLock.unlock()
+    }
+
+    nonisolated static func untrackProcess(_ p: Process) {
+        processLock.lock()
+        trackedProcesses.removeValue(forKey: p.processIdentifier)
+        processLock.unlock()
+    }
+
+    /// Terminate all running subprocesses. Called on app quit.
+    nonisolated static func terminateAll() {
+        processLock.lock()
+        let procs = trackedProcesses.values.filter { $0.isRunning }
+        processLock.unlock()
+        for p in procs { p.terminate() }
+    }
 
     nonisolated private static let binaryCache = BinaryCache()
 
@@ -129,6 +162,7 @@ final class FFmpegRunner: ObservableObject {
         }
 
         p.terminationHandler = { [weak self] proc in
+            FFmpegRunner.untrackProcess(proc)
             // Drain anything left in the pipe so the final ffmpeg summary
             // (and any error tail) is visible in the log.
             handle.readabilityHandler = nil
@@ -141,6 +175,7 @@ final class FFmpegRunner: ObservableObject {
 
         do {
             try p.run()
+            Self.trackProcess(p)
             self.process = p
         } catch {
             appendLog("ERROR: \(error.localizedDescription)\n")
@@ -786,6 +821,194 @@ struct ConcatView: View {
     }
 }
 
+// MARK: - Transcribe
+
+struct TranscribeView: View {
+    @EnvironmentObject var runner: FFmpegRunner
+    @State private var inputPath = ""
+    @State private var model = "base"
+    @State private var language = ""
+    @State private var transcript = ""
+    @State private var isTranscribing = false
+
+    private let models = ["tiny", "base", "small", "medium", "large"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            FilePickerRow(label: "Input:", path: $inputPath,
+                          contentTypes: [.movie, .video, .audio])
+
+            HStack(spacing: 0) {
+                Text("Model:").frame(width: formLabelWidth, alignment: .trailing)
+                Picker("model", selection: $model) {
+                    ForEach(models, id: \.self) { Text($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .padding(.leading, 6)
+                Spacer()
+            }
+
+            HStack {
+                Text("Language:").frame(width: formLabelWidth, alignment: .trailing)
+                TextField("auto-detect", text: $language)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 150)
+                Text("e.g. en, zh, ja").foregroundColor(.secondary).font(.caption)
+                Spacer()
+            }
+
+            HStack {
+                Spacer()
+                Button(action: transcribe) {
+                    Label("Transcribe", systemImage: "text.bubble")
+                        .frame(minWidth: 100)
+                }
+                .keyboardShortcut(.return, modifiers: [.command])
+                .disabled(inputPath.isEmpty || isTranscribing || runner.isRunning)
+                .buttonStyle(.borderedProminent)
+            }.padding(.top, 6)
+
+            if !transcript.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Transcript:").font(.headline)
+                        Spacer()
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(transcript, forType: .string)
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
+                    }
+                    ScrollView {
+                        Text(transcript)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .cornerRadius(6)
+                    .frame(maxHeight: 250)
+                }
+            }
+        }
+        .padding()
+    }
+
+    private func transcribe() {
+        let whisperBin = FFmpegRunner.resolveBinary("whisper")
+
+        // Check if whisper is installed
+        if !FileManager.default.isExecutableFile(atPath: whisperBin) {
+            runner.log = ""
+            runner.status = "whisper not found"
+            runner.log = "⚠️  Could not find the whisper command.\n\n" +
+                "Install it with:\n  pip install openai-whisper\nor:\n  brew install whisper\n"
+            return
+        }
+
+        isTranscribing = true
+        transcript = ""
+        runner.progress = 0
+        runner.log = ""
+        runner.status = "Transcribing…"
+        runner.isRunning = true
+
+        let tmpDir = NSTemporaryDirectory() + "ffmpeg-gui-whisper-\(ProcessInfo.processInfo.globallyUniqueString)"
+        try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+
+        var args = [inputPath, "--model", model, "--output_format", "txt", "--output_dir", tmpDir, "--fp16", "False"]
+        if !language.trimmingCharacters(in: .whitespaces).isEmpty {
+            args += ["--language", language.trimmingCharacters(in: .whitespaces)]
+        }
+
+        runner.log = "$ \(whisperBin) \(args.joined(separator: " "))\n"
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: whisperBin)
+        p.arguments = args
+
+        // Whisper internally shells out to ffmpeg for audio loading.
+        // Ensure ffmpeg's directory is on PATH so the subprocess can find it.
+        let ffmpegBin = FFmpegRunner.resolveBinary("ffmpeg")
+        let ffmpegDir = (ffmpegBin as NSString).deletingLastPathComponent
+        let basePath = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin"
+        p.environment = ProcessInfo.processInfo.environment.merging(
+            ["PATH": "\(ffmpegDir):\(basePath)"]
+        ) { _, new in new }
+
+        let errPipe = Pipe()
+        let outPipe = Pipe()
+        p.standardError = errPipe
+        p.standardOutput = outPipe
+
+        let errHandle = errPipe.fileHandleForReading
+        errHandle.readabilityHandler = { [weak runner] fh in
+            let data = fh.availableData
+            if data.isEmpty { return }
+            if let text = String(data: data, encoding: .utf8) {
+                Task { @MainActor in runner?.log += text }
+            }
+        }
+        let outHandle = outPipe.fileHandleForReading
+        outHandle.readabilityHandler = { [weak runner] fh in
+            let data = fh.availableData
+            if data.isEmpty { return }
+            if let text = String(data: data, encoding: .utf8) {
+                Task { @MainActor in runner?.log += text }
+            }
+        }
+
+        p.terminationHandler = { [weak runner] proc in
+            FFmpegRunner.untrackProcess(proc)
+            errHandle.readabilityHandler = nil
+            outHandle.readabilityHandler = nil
+            let tailErr = errHandle.readDataToEndOfFile()
+            let tailOut = outHandle.readDataToEndOfFile()
+            Task { @MainActor [weak runner] in
+                if let t = String(data: tailErr, encoding: .utf8), !t.isEmpty { runner?.log += t }
+                if let t = String(data: tailOut, encoding: .utf8), !t.isEmpty { runner?.log += t }
+
+                if proc.terminationStatus == 0 {
+                    // Read the .txt output file
+                    let baseName = ((inputPath as NSString).lastPathComponent as NSString).deletingPathExtension
+                    let txtPath = (tmpDir as NSString).appendingPathComponent(baseName + ".txt")
+                    if let content = try? String(contentsOfFile: txtPath, encoding: .utf8) {
+                        self.transcript = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    } else {
+                        // Try to find any .txt file in the output dir
+                        if let files = try? FileManager.default.contentsOfDirectory(atPath: tmpDir),
+                           let txtFile = files.first(where: { $0.hasSuffix(".txt") }),
+                           let content = try? String(contentsOfFile: (tmpDir as NSString).appendingPathComponent(txtFile), encoding: .utf8) {
+                            self.transcript = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    }
+                    runner?.status = "Done ✓"
+                    runner?.progress = 1.0
+                } else {
+                    runner?.status = "Failed (exit \(proc.terminationStatus))"
+                }
+                // Clean up temp dir
+                try? FileManager.default.removeItem(atPath: tmpDir)
+                runner?.isRunning = false
+                self.isTranscribing = false
+            }
+        }
+
+        do {
+            try p.run()
+            FFmpegRunner.trackProcess(p)
+        } catch {
+            runner.log += "ERROR: \(error.localizedDescription)\n"
+            runner.isRunning = false
+            runner.status = "Failed to launch whisper"
+            isTranscribing = false
+            try? FileManager.default.removeItem(atPath: tmpDir)
+        }
+    }
+}
+
 struct RunButton: View {
     @EnvironmentObject var runner: FFmpegRunner
     let canRun: Bool
@@ -817,6 +1040,7 @@ struct ContentView: View {
         case .concat:       ConcatView()
         case .convert:      ConvertView()
         case .convertAudio: ConvertAudioView()
+        case .transcribe:   TranscribeView()
         }
     }
 
@@ -832,7 +1056,12 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 Group {
                     if let sel = selection {
-                        detail(for: sel)
+                        GeometryReader { geo in
+                            ScrollView {
+                                detail(for: sel)
+                                    .frame(minHeight: geo.size.height)
+                            }
+                        }
                     } else {
                         Text("Select a task")
                             .foregroundColor(.secondary)
