@@ -19,6 +19,7 @@ struct FFmpegGUIApp: App {
 
 enum FFTask: String, CaseIterable, Identifiable, Hashable {
     case mergeAV = "Merge A/V"
+    case concat = "Concatenate"
     case convert = "Convert Video"
     case convertAudio = "Convert Audio"
 
@@ -28,6 +29,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
     var icon: String {
         switch self {
         case .mergeAV:       return "plus.square.on.square"
+        case .concat:        return "text.line.first.and.arrowtriangle.forward"
         case .convert:       return "arrow.triangle.2.circlepath"
         case .convertAudio:  return "waveform"
         }
@@ -605,6 +607,88 @@ struct MergeAVView: View {
 
 // MARK: - Reusable UI
 
+struct ConcatView: View {
+    @EnvironmentObject var runner: FFmpegRunner
+    @State private var files: [String] = []
+    @State private var completedOutput = ""
+
+    private func addFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.movie, .audiovisualContent]
+        if panel.runModal() == .OK {
+            files.append(contentsOf: panel.urls.map(\.path))
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Videos:").frame(width: formLabelWidth, alignment: .trailing)
+                Text("\(files.count) file\(files.count == 1 ? "" : "s") added")
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Add Files…") { addFiles() }
+                Button("Clear") { files.removeAll(); completedOutput = "" }
+                    .disabled(files.isEmpty)
+            }
+
+            if !files.isEmpty {
+                HStack(alignment: .top) {
+                    Spacer().frame(width: formLabelWidth)
+                    List {
+                        ForEach(Array(files.enumerated()), id: \.offset) { i, file in
+                            HStack {
+                                Text("\(i + 1).")
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 24, alignment: .trailing)
+                                Text((file as NSString).lastPathComponent)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .help(file)
+                                Spacer()
+                                Button {
+                                    files.remove(at: i)
+                                    completedOutput = ""
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                        .onMove { from, to in
+                            files.move(fromOffsets: from, toOffset: to)
+                            completedOutput = ""
+                        }
+                    }
+                    .frame(maxHeight: 160)
+                    .cornerRadius(6)
+                }
+            }
+
+            OutputHintRow(path: completedOutput)
+            RunButton(canRun: files.count >= 2) {
+                // Write a temporary concat list file for ffmpeg's concat demuxer.
+                let tmp = NSTemporaryDirectory() + "ffmpeg-gui-concat-\(ProcessInfo.processInfo.globallyUniqueString).txt"
+                let listing = files.map { "file '\($0.replacingOccurrences(of: "'", with: "'\\''"))'" }
+                    .joined(separator: "\n")
+                try? listing.write(toFile: tmp, atomically: true, encoding: .utf8)
+
+                let out = makeOutputPath(input: files[0], ext: inputExt(files[0]))
+                runner.run(
+                    args: ["-f", "concat", "-safe", "0", "-i", tmp,
+                           "-c", "copy", "-y", out],
+                    inputForDuration: nil
+                ) { completedOutput = $0; try? FileManager.default.removeItem(atPath: tmp) }
+            }
+        }
+        .padding()
+    }
+}
+
 struct RunButton: View {
     @EnvironmentObject var runner: FFmpegRunner
     let canRun: Bool
@@ -633,6 +717,7 @@ struct ContentView: View {
     private func detail(for task: FFTask) -> some View {
         switch task {
         case .mergeAV:      MergeAVView()
+        case .concat:       ConcatView()
         case .convert:      ConvertView()
         case .convertAudio: ConvertAudioView()
         }
