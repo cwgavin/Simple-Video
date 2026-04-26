@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a 1024x1024 PNG icon for FFmpeg GUI: film strip + play button.
+"""Generate a 1024x1024 PNG icon for Simple Video: film strip + play button.
 Pure stdlib — writes a valid PNG with no external dependencies.
 """
 import math, struct, zlib, array, sys

@@ -14,7 +14,7 @@ struct FFmpegGUIApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("FFmpeg GUI") {
+        WindowGroup("Simple Video") {
             ContentView()
                 .frame(minWidth: 920, minHeight: 580)
         }
@@ -799,7 +799,7 @@ struct ConcatView: View {
                     runner.run(args: args, inputForDuration: nil) { completedOutput = $0 }
                 } else {
                     // Same format — use the concat demuxer with stream copy (fast).
-                    let tmp = NSTemporaryDirectory() + "ffmpeg-gui-concat-\(ProcessInfo.processInfo.globallyUniqueString).txt"
+                    let tmp = NSTemporaryDirectory() + "simple-video-concat-\(ProcessInfo.processInfo.globallyUniqueString).txt"
                     let listing = files.map { "file '\($0.replacingOccurrences(of: "'", with: "'\\''"))'" }
                         .joined(separator: "\n")
                     try? listing.write(toFile: tmp, atomically: true, encoding: .utf8)
@@ -915,7 +915,7 @@ struct TranscribeView: View {
         runner.status = "Transcribing…"
         runner.isRunning = true
 
-        let tmpDir = NSTemporaryDirectory() + "ffmpeg-gui-whisper-\(ProcessInfo.processInfo.globallyUniqueString)"
+        let tmpDir = NSTemporaryDirectory() + "simple-video-whisper-\(ProcessInfo.processInfo.globallyUniqueString)"
         try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
 
         var args = [inputPath, "--model", model, "--output_format", "txt", "--output_dir", tmpDir, "--fp16", "False"]
@@ -1051,7 +1051,7 @@ struct ContentView: View {
                     .tag(task)
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
-            .navigationTitle("FFmpeg GUI")
+            .navigationTitle("Simple Video")
         } detail: {
             VStack(spacing: 0) {
                 Group {

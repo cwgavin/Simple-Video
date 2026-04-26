@@ -1,5 +1,6 @@
 .DS_Store
 .build/
+Simple Video.app/
 FFmpeg GUI.app/
 *.xcodeproj/
 Package.resolved

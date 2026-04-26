@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "FFmpegGUI",
+    name: "SimpleVideo",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "FFmpegGUI",
+            name: "SimpleVideo",
             path: "Sources/FFmpegGUI"
         )
     ]
