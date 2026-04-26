@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import Foundation
 import UniformTypeIdentifiers
 
 // MARK: - App entry
@@ -21,28 +20,14 @@ struct FFmpegGUIApp: App {
 enum FFTask: String, CaseIterable, Identifiable, Hashable {
     case mergeAV = "Merge A/V"
     case convert = "Convert Video"
-    case extractAudio = "Extract Audio"
-    case removeAudio = "Remove Audio"
-    case trim = "Trim"
-    case resize = "Resize"
-    case compress = "Compress"
-    case toGIF = "To GIF"
-    case frames = "Frames"
 
     var id: String { rawValue }
     var title: String { rawValue }
 
     var icon: String {
         switch self {
-        case .mergeAV:      return "plus.square.on.square"
-        case .convert:      return "arrow.triangle.2.circlepath"
-        case .extractAudio: return "waveform"
-        case .removeAudio:  return "speaker.slash"
-        case .trim:         return "scissors"
-        case .resize:       return "arrow.up.left.and.arrow.down.right"
-        case .compress:     return "rectangle.compress.vertical"
-        case .toGIF:        return "photo"
-        case .frames:       return "square.grid.2x2"
+        case .mergeAV: return "plus.square.on.square"
+        case .convert: return "arrow.triangle.2.circlepath"
         }
     }
 }
@@ -60,52 +45,19 @@ final class FFmpegRunner: ObservableObject {
     private var duration: Double = 0
     private var pendingOutput: String = ""
     private var pendingSuccess: ((String) -> Void)?
+    private var stderrBuffer: Data = Data()
 
-    static func resolveBinary(_ name: String) -> String {
-        // 1) Common fixed paths
-        let fixed = [
-            "/opt/homebrew/bin/\(name)",
-            "/opt/homebrew/opt/\(name)/bin/\(name)",
-            "/opt/homebrew/opt/\(name)@7/bin/\(name)",
-            "/opt/homebrew/opt/\(name)@6/bin/\(name)",
-            "/usr/local/bin/\(name)",
-            "/usr/local/opt/\(name)/bin/\(name)",
-            "/opt/local/bin/\(name)",
-            "/usr/bin/\(name)",
-        ]
-        for p in fixed where FileManager.default.isExecutableFile(atPath: p) {
-            return p
-        }
-        // 2) Ask the shell — covers any custom install location on the user's PATH
-        if let p = whichViaShell(name) { return p }
-        // 3) Last resort: return name and let Process fail with a clear message
-        return name
+    nonisolated private static let binaryCache = BinaryCache()
+
+    nonisolated static func resolveBinary(_ name: String) -> String {
+        binaryCache.resolve(name)
     }
 
-    private static func whichViaShell(_ name: String) -> String? {
+    /// Probes media duration via ffprobe. Safe to call off the main actor —
+    /// blocks the calling thread until ffprobe returns.
+    nonisolated static func probeDuration(_ path: String) -> Double {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        // -i -l so user's PATH from .zshrc/.zprofile is loaded
-        p.arguments = ["-ilc", "command -v \(name)"]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        p.standardError = Pipe()
-        do {
-            try p.run()
-            p.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let s = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !s.isEmpty, FileManager.default.isExecutableFile(atPath: s) {
-                return s
-            }
-        } catch {}
-        return nil
-    }
-
-    func probeDuration(_ path: String) -> Double {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: Self.resolveBinary("ffprobe"))
+        p.executableURL = URL(fileURLWithPath: resolveBinary("ffprobe"))
         p.arguments = ["-v", "error", "-show_entries", "format=duration",
                        "-of", "default=noprint_wrappers=1:nokey=1", path]
         let pipe = Pipe()
@@ -140,13 +92,22 @@ final class FFmpegRunner: ObservableObject {
         progress = 0
         log = ""
         status = "Running…"
-        duration = inputForDuration.map { probeDuration($0) } ?? 0
         pendingOutput = (args.last?.hasPrefix("-") == false) ? (args.last ?? "") : ""
         pendingSuccess = onSuccess
 
         let bin = Self.resolveBinary("ffmpeg")
         let full = ["-hide_banner", "-loglevel", "info", "-progress", "pipe:2"] + args
         appendLog("$ \(bin) \(full.joined(separator: " "))\n")
+
+        // Probe duration off the main actor so the UI doesn't stall on slow disks.
+        if let path = inputForDuration {
+            Task.detached(priority: .userInitiated) {
+                let d = FFmpegRunner.probeDuration(path)
+                await MainActor.run { self.duration = d }
+            }
+        } else {
+            duration = 0
+        }
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bin)
@@ -160,14 +121,18 @@ final class FFmpegRunner: ObservableObject {
         handle.readabilityHandler = { [weak self] fh in
             let data = fh.availableData
             if data.isEmpty { return }
-            if let s = String(data: data, encoding: .utf8) {
-                Task { @MainActor in self?.handleStderr(s) }
-            }
+            Task { @MainActor in self?.handleStderr(data) }
         }
 
         p.terminationHandler = { [weak self] proc in
+            // Drain anything left in the pipe so the final ffmpeg summary
+            // (and any error tail) is visible in the log.
             handle.readabilityHandler = nil
-            Task { @MainActor in self?.finished(code: proc.terminationStatus) }
+            let tail = handle.readDataToEndOfFile()
+            Task { @MainActor in
+                if !tail.isEmpty { self?.handleStderr(tail) }
+                self?.finished(code: proc.terminationStatus)
+            }
         }
 
         do {
@@ -212,8 +177,30 @@ final class FFmpegRunner: ObservableObject {
         return url.path
     }
 
-    private func handleStderr(_ s: String) {
-        appendLog(s)
+    /// Accumulate raw bytes so a multi-byte UTF-8 character split across pipe
+    /// reads doesn't corrupt the log. Decode whatever forms a valid prefix.
+    private func handleStderr(_ data: Data) {
+        stderrBuffer.append(data)
+        var decoded = ""
+        var consumed = 0
+        // Try the whole buffer first; on failure trim trailing bytes that may
+        // be a partial multi-byte sequence (UTF-8 sequences are at most 4 bytes).
+        for trim in 0..<min(4, stderrBuffer.count) {
+            let slice = stderrBuffer.prefix(stderrBuffer.count - trim)
+            if let s = String(data: slice, encoding: .utf8) {
+                decoded = s
+                consumed = slice.count
+                break
+            }
+        }
+        if consumed > 0 {
+            stderrBuffer.removeFirst(consumed)
+            appendLog(decoded)
+            parseProgress(decoded)
+        }
+    }
+
+    private func parseProgress(_ s: String) {
         // Parse "time=HH:MM:SS.xx"
         if let range = s.range(of: #"time=(\d+):(\d+):(\d+(?:\.\d+)?)"#, options: .regularExpression) {
             let chunk = String(s[range])
@@ -234,6 +221,7 @@ final class FFmpegRunner: ObservableObject {
     private func finished(code: Int32) {
         isRunning = false
         process = nil
+        stderrBuffer.removeAll(keepingCapacity: false)
         if code == 0 {
             progress = 1.0
             status = "Done ✓"
@@ -249,39 +237,102 @@ final class FFmpegRunner: ObservableObject {
 
     private func appendLog(_ s: String) {
         log.append(s)
+        // Keep both head (command line, codec init) and tail (recent activity);
+        // drop the middle so users keep diagnostic context on long runs.
         if log.count > 200_000 {
-            log = String(log.suffix(150_000))
+            let head = log.prefix(20_000)
+            let tail = log.suffix(130_000)
+            log = head + "\n…[log truncated]…\n" + tail
         }
+    }
+}
+
+/// Thread-safe cache of resolved tool paths so we don't spawn a shell on
+/// every Run. Resolution is performed once per binary name per app launch.
+private final class BinaryCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cache: [String: String] = [:]
+
+    func resolve(_ name: String) -> String {
+        lock.lock()
+        if let hit = cache[name] { lock.unlock(); return hit }
+        lock.unlock()
+
+        let resolved = Self.lookup(name)
+
+        lock.lock()
+        cache[name] = resolved
+        lock.unlock()
+        return resolved
+    }
+
+    private static func lookup(_ name: String) -> String {
+        let fixed = [
+            "/opt/homebrew/bin/\(name)",
+            "/opt/homebrew/opt/\(name)/bin/\(name)",
+            "/opt/homebrew/opt/\(name)@7/bin/\(name)",
+            "/opt/homebrew/opt/\(name)@6/bin/\(name)",
+            "/usr/local/bin/\(name)",
+            "/usr/local/opt/\(name)/bin/\(name)",
+            "/opt/local/bin/\(name)",
+            "/usr/bin/\(name)",
+        ]
+        for p in fixed where FileManager.default.isExecutableFile(atPath: p) {
+            return p
+        }
+        if let p = whichViaShell(name) { return p }
+        return name
+    }
+
+    /// Use a non-interactive `/bin/sh` so we don't pay the cost of sourcing
+    /// the user's full zsh init (oh-my-zsh, plugins, etc.) on app launch.
+    /// We pre-augment PATH with the standard Homebrew/MacPorts locations so
+    /// `command -v` finds tools installed there even without user PATH.
+    private static func whichViaShell(_ name: String) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        let path = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin"
+        p.environment = ["PATH": path]
+        p.arguments = ["-c", "command -v \(name)"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        do {
+            try p.run()
+            p.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let s = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !s.isEmpty, FileManager.default.isExecutableFile(atPath: s) {
+                return s
+            }
+        } catch {}
+        return nil
     }
 }
 
 // MARK: - File picker helpers
 
 enum Files {
-    static func openFile(types: [String] = []) -> String? {
+    static func openFile(contentTypes: [UTType] = []) -> String? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
-        if !types.isEmpty {
-            panel.allowedFileTypes = types
+        if !contentTypes.isEmpty {
+            panel.allowedContentTypes = contentTypes
         }
-        return panel.runModal() == .OK ? panel.url?.path : nil
-    }
-
-    static func saveFile(suggested: String = "output.mp4") -> String? {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = suggested
         return panel.runModal() == .OK ? panel.url?.path : nil
     }
 }
 
 // MARK: - Common UI bits
 
-/// Generates an output path next to `input` named purely with a millisecond
-/// timestamp so collisions are effectively impossible.
-/// Example: /Users/me/Movies/clip.mov + "mp4" → /Users/me/Movies/20260426-001234-567.mp4
-func makeOutputPath(input: String, ext: String, suffix: String = "") -> String {
+/// Generates an output path next to `input` named with a millisecond timestamp
+/// so collisions are effectively impossible.
+/// Example: `/Users/me/Movies/clip.mov`, ext `mp4`
+///       → `/Users/me/Movies/20260426-001234-567.mp4`
+func makeOutputPath(input: String, ext: String) -> String {
     let url = URL(fileURLWithPath: input)
     let dir = url.deletingLastPathComponent().path
     let fmt = DateFormatter()
@@ -295,14 +346,12 @@ func inputExt(_ path: String) -> String {
     return e.isEmpty ? "mp4" : e
 }
 
-private let formLabelWidth: CGFloat = 160
+private let formLabelWidth: CGFloat = 100
 
 struct FilePickerRow: View {
     let label: String
     @Binding var path: String
-    var save: Bool = false
-    var suggested: String = "output.mp4"
-    var types: [String] = []
+    var contentTypes: [UTType] = []
 
     @State private var isDropTarget = false
 
@@ -334,15 +383,22 @@ struct FilePickerRow: View {
             .onDrop(of: [UTType.fileURL], isTargeted: $isDropTarget) { providers in
                 guard let p = providers.first else { return false }
                 _ = p.loadObject(ofClass: URL.self) { url, _ in
-                    if let u = url {
-                        DispatchQueue.main.async { self.path = u.path }
+                    guard let u = url, u.isFileURL else { return }
+                    // If the row was configured with allowed UTTypes, reject
+                    // drops of unrelated kinds (folders, .app bundles, etc.).
+                    if !contentTypes.isEmpty {
+                        let values = try? u.resourceValues(forKeys: [.contentTypeKey])
+                        guard let ct = values?.contentType,
+                              contentTypes.contains(where: { ct.conforms(to: $0) }) else {
+                            return
+                        }
                     }
+                    DispatchQueue.main.async { self.path = u.path }
                 }
                 return true
             }
             Button("Browse…") {
-                if let p = save ? Files.saveFile(suggested: suggested)
-                                : Files.openFile(types: types) {
+                if let p = Files.openFile(contentTypes: contentTypes) {
                     path = p
                 }
             }
@@ -422,13 +478,14 @@ struct ConvertView: View {
     }
 
     var body: some View {
-        Form {
-            FilePickerRow(label: "Input video:", path: $input)
+        VStack(alignment: .leading, spacing: 12) {
+            Spacer()
+            FilePickerRow(label: "Input video:", path: $input, contentTypes: [.movie, .audiovisualContent])
             HStack {
                 Text("Output format:").frame(width: formLabelWidth, alignment: .trailing)
                 Picker("format", selection: $format) {
                     ForEach(videoFormats, id: \.self) { Text(".\($0)").tag($0) }
-                }.labelsHidden().frame(width: 200)
+                }.labelsHidden().fixedSize()
                 Spacer()
             }
             OutputHintRow(path: completedOutput)
@@ -437,217 +494,15 @@ struct ConvertView: View {
                 runner.run(args: ffmpegArgs(input: input, output: out),
                            inputForDuration: input) { completedOutput = $0 }
             }
+            Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
         .onChange(of: input)  { _, _ in completedOutput = "" }
         .onChange(of: format) { _, _ in completedOutput = "" }
     }
 }
 
-struct ExtractAudioView: View {
-    @EnvironmentObject var runner: FFmpegRunner
-    @State private var input = ""
-    @State private var codec = "libmp3lame"
-    @State private var completedOutput = ""
-    let codecs = ["libmp3lame", "aac", "pcm_s16le", "flac", "copy"]
-
-    private var ext: String {
-        switch codec {
-        case "libmp3lame": return "mp3"
-        case "aac":        return "m4a"
-        case "pcm_s16le":  return "wav"
-        case "flac":       return "flac"
-        default:           return "m4a"
-        }
-    }
-
-    var body: some View {
-        Form {
-            FilePickerRow(label: "Input video:", path: $input)
-            HStack {
-                Text("Audio codec:").frame(width: formLabelWidth, alignment: .trailing)
-                Picker("codec", selection: $codec) {
-                    ForEach(codecs, id: \.self) { Text($0) }
-                }.labelsHidden().frame(width: 200)
-                Spacer()
-            }
-            OutputHintRow(path: completedOutput)
-            RunButton(canRun: !input.isEmpty) {
-                let out = makeOutputPath(input: input, ext: ext)
-                runner.run(args: ["-i", input, "-vn", "-acodec", codec, "-y", out],
-                           inputForDuration: input) { completedOutput = $0 }
-            }
-        }
-        .padding()
-        .onChange(of: input) { _, _ in completedOutput = "" }
-        .onChange(of: codec) { _, _ in completedOutput = "" }
-    }
-}
-
-struct RemoveAudioView: View {
-    @EnvironmentObject var runner: FFmpegRunner
-    @State private var input = ""
-    @State private var completedOutput = ""
-    var body: some View {
-        Form {
-            FilePickerRow(label: "Input video:", path: $input)
-            OutputHintRow(path: completedOutput)
-            RunButton(canRun: !input.isEmpty) {
-                let out = makeOutputPath(input: input, ext: inputExt(input))
-                runner.run(args: ["-i", input, "-c", "copy", "-an", "-y", out],
-                           inputForDuration: input) { completedOutput = $0 }
-            }
-        }
-        .padding()
-        .onChange(of: input) { _, _ in completedOutput = "" }
-    }
-}
-
-struct TrimView: View {
-    @EnvironmentObject var runner: FFmpegRunner
-    @State private var input = ""
-    @State private var start = "00:00:00"
-    @State private var end = ""
-    @State private var completedOutput = ""
-    var body: some View {
-        Form {
-            FilePickerRow(label: "Input:", path: $input)
-            LabeledField(label: "Start (HH:MM:SS):", text: $start)
-            LabeledField(label: "End (optional):", text: $end)
-            OutputHintRow(path: completedOutput)
-            RunButton(canRun: !input.isEmpty) {
-                let out = makeOutputPath(input: input, ext: inputExt(input))
-                var args = ["-ss", start, "-i", input]
-                if !end.isEmpty { args += ["-to", end] }
-                args += ["-c", "copy", "-y", out]
-                runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
-            }
-        }
-        .padding()
-        .onChange(of: input) { _, _ in completedOutput = "" }
-        .onChange(of: start) { _, _ in completedOutput = "" }
-        .onChange(of: end)   { _, _ in completedOutput = "" }
-    }
-}
-
-struct ResizeView: View {
-    @EnvironmentObject var runner: FFmpegRunner
-    @State private var input = ""
-    @State private var width = "1280"
-    @State private var height = "-1"
-    @State private var completedOutput = ""
-    var body: some View {
-        Form {
-            FilePickerRow(label: "Input video:", path: $input)
-            LabeledField(label: "Width (px, -1 auto):", text: $width)
-            LabeledField(label: "Height (px, -1 auto):", text: $height)
-            OutputHintRow(path: completedOutput)
-            RunButton(canRun: !input.isEmpty) {
-                let out = makeOutputPath(input: input, ext: inputExt(input))
-                runner.run(args: ["-i", input, "-vf", "scale=\(width):\(height)",
-                                  "-c:a", "copy", "-y", out],
-                           inputForDuration: input) { completedOutput = $0 }
-            }
-        }
-        .padding()
-        .onChange(of: input)  { _, _ in completedOutput = "" }
-        .onChange(of: width)  { _, _ in completedOutput = "" }
-        .onChange(of: height) { _, _ in completedOutput = "" }
-    }
-}
-
-struct CompressView: View {
-    @EnvironmentObject var runner: FFmpegRunner
-    @State private var input = ""
-    @State private var crf: Double = 23
-    @State private var preset = "medium"
-    @State private var completedOutput = ""
-    let presets = ["ultrafast", "superfast", "veryfast", "faster", "fast",
-                   "medium", "slow", "slower", "veryslow"]
-    var body: some View {
-        Form {
-            FilePickerRow(label: "Input video:", path: $input)
-            HStack {
-                Text("CRF: \(Int(crf))").frame(width: formLabelWidth, alignment: .trailing)
-                Slider(value: $crf, in: 0...51, step: 1).frame(maxWidth: 300)
-                Spacer()
-            }
-            HStack {
-                Text("Preset:").frame(width: formLabelWidth, alignment: .trailing)
-                Picker("preset", selection: $preset) {
-                    ForEach(presets, id: \.self) { Text($0) }
-                }.labelsHidden().frame(width: 200)
-                Spacer()
-            }
-            OutputHintRow(path: completedOutput)
-            RunButton(canRun: !input.isEmpty) {
-                let out = makeOutputPath(input: input, ext: "mp4")
-                runner.run(args: ["-i", input, "-c:v", "libx264",
-                                  "-crf", "\(Int(crf))", "-preset", preset,
-                                  "-c:a", "aac", "-b:a", "128k", "-y", out],
-                           inputForDuration: input) { completedOutput = $0 }
-            }
-        }
-        .padding()
-        .onChange(of: input)  { _, _ in completedOutput = "" }
-        .onChange(of: crf)    { _, _ in completedOutput = "" }
-        .onChange(of: preset) { _, _ in completedOutput = "" }
-    }
-}
-
-struct GIFView: View {
-    @EnvironmentObject var runner: FFmpegRunner
-    @State private var input = ""
-    @State private var fps = "12"
-    @State private var width = "480"
-    @State private var completedOutput = ""
-    var body: some View {
-        Form {
-            FilePickerRow(label: "Input video:", path: $input)
-            LabeledField(label: "FPS:", text: $fps)
-            LabeledField(label: "Width (px):", text: $width)
-            OutputHintRow(path: completedOutput)
-            RunButton(canRun: !input.isEmpty) {
-                let out = makeOutputPath(input: input, ext: "gif")
-                let vf = "fps=\(fps),scale=\(width):-1:flags=lanczos"
-                runner.run(args: ["-i", input, "-vf", vf, "-y", out],
-                           inputForDuration: input) { completedOutput = $0 }
-            }
-        }
-        .padding()
-        .onChange(of: input) { _, _ in completedOutput = "" }
-        .onChange(of: fps)   { _, _ in completedOutput = "" }
-        .onChange(of: width) { _, _ in completedOutput = "" }
-    }
-}
-
-struct FramesView: View {
-    @EnvironmentObject var runner: FFmpegRunner
-    @State private var input = ""
-    @State private var fps = "1"
-    @State private var completedOutput = ""
-    var body: some View {
-        Form {
-            FilePickerRow(label: "Input video:", path: $input)
-            LabeledField(label: "FPS:", text: $fps)
-            OutputHintRow(path: completedOutput)
-            RunButton(canRun: !input.isEmpty) {
-                let url = URL(fileURLWithPath: input)
-                let dir = url.deletingLastPathComponent().path
-                let fmt = DateFormatter(); fmt.dateFormat = "yyyyMMdd-HHmmss-SSS"
-                let folder = "\(dir)/\(fmt.string(from: Date()))"
-                try? FileManager.default.createDirectory(atPath: folder,
-                    withIntermediateDirectories: true)
-                let pattern = "\(folder)/frame_%04d.png"
-                runner.run(args: ["-i", input, "-vf", "fps=\(fps)", "-y", pattern],
-                           inputForDuration: input) { _ in completedOutput = folder }
-            }
-        }
-        .padding()
-        .onChange(of: input) { _, _ in completedOutput = "" }
-        .onChange(of: fps)   { _, _ in completedOutput = "" }
-    }
-}
 
 struct MergeAVView: View {
     @EnvironmentObject var runner: FFmpegRunner
@@ -655,9 +510,10 @@ struct MergeAVView: View {
     @State private var audio = ""
     @State private var completedOutput = ""
     var body: some View {
-        Form {
-            FilePickerRow(label: "Video file:", path: $video)
-            FilePickerRow(label: "Audio file:", path: $audio)
+        VStack(alignment: .leading, spacing: 12) {
+            Spacer()
+            FilePickerRow(label: "Video file:", path: $video, contentTypes: [.movie, .audiovisualContent])
+            FilePickerRow(label: "Audio file:", path: $audio, contentTypes: [.audio, .movie, .audiovisualContent])
             OutputHintRow(path: completedOutput)
             RunButton(canRun: !video.isEmpty && !audio.isEmpty) {
                 let out = makeOutputPath(input: video, ext: inputExt(video))
@@ -667,7 +523,9 @@ struct MergeAVView: View {
                                   "-shortest", "-y", out],
                            inputForDuration: video) { completedOutput = $0 }
             }
+            Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
         .onChange(of: video) { _, _ in completedOutput = "" }
         .onChange(of: audio) { _, _ in completedOutput = "" }
@@ -675,19 +533,6 @@ struct MergeAVView: View {
 }
 
 // MARK: - Reusable UI
-
-struct LabeledField: View {
-    let label: String
-    @Binding var text: String
-    var body: some View {
-        HStack {
-            Text(label).frame(width: formLabelWidth, alignment: .trailing)
-            TextField("", text: $text).textFieldStyle(.roundedBorder).frame(maxWidth: 300)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
 
 struct RunButton: View {
     @EnvironmentObject var runner: FFmpegRunner
@@ -716,15 +561,8 @@ struct ContentView: View {
     @ViewBuilder
     private func detail(for task: FFTask) -> some View {
         switch task {
-        case .mergeAV:      MergeAVView()
-        case .convert:      ConvertView()
-        case .extractAudio: ExtractAudioView()
-        case .removeAudio:  RemoveAudioView()
-        case .trim:         TrimView()
-        case .resize:       ResizeView()
-        case .compress:     CompressView()
-        case .toGIF:        GIFView()
-        case .frames:       FramesView()
+        case .mergeAV: MergeAVView()
+        case .convert: ConvertView()
         }
     }
 

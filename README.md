@@ -5,14 +5,7 @@ Built with **SwiftUI**. No external dependencies beyond `ffmpeg`/`ffprobe`.
 
 ## Features
 
-- **Convert** between formats / codecs
-- **Extract audio** (MP3, AAC, WAV, FLAC…)
-- **Remove audio** (mute a video)
-- **Trim** by start/end timestamps
-- **Resize** (set width/height; `-1` keeps aspect)
-- **Compress** with H.264 + CRF + preset
-- **GIF** export with FPS + width
-- **Extract frames** as PNG
+- **Convert** between formats / codecs (mp4, mov, mkv, webm, avi, flv, m4v, ts)
 - **Merge** separate video + audio
 - Live ffmpeg log
 - Real-time progress bar
