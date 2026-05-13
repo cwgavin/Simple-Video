@@ -1797,6 +1797,7 @@ struct CropVideoView: View {
     @State private var cropRect = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
     @State private var selectedAspectRatio = "free"
     @State private var isLoadingPreview = false
+    @State private var isDetectingBlackBars = false
     @State private var previewError = ""
     @State private var completedOutput = ""
 
@@ -1898,10 +1899,20 @@ struct CropVideoView: View {
                             .foregroundColor(.secondary)
                         }
                         Spacer()
+                        Button {
+                            detectBlackBars()
+                        } label: {
+                            Label(L.text(language, "Auto detect black bars", "自动检测黑边"), systemImage: "wand.and.stars")
+                        }
+                        .disabled(input.isEmpty || previewImage == nil || isLoadingPreview || isDetectingBlackBars || runner.isRunning)
                         Button(L.text(language, "Reset crop", "重置裁剪")) {
                             cropRect = defaultCropRect()
                         }
-                        .disabled(previewImage == nil)
+                        .disabled(previewImage == nil || isDetectingBlackBars)
+                    }
+                    if isDetectingBlackBars {
+                        ProgressView(L.text(language, "Detecting black bars…", "正在检测黑边…"))
+                            .controlSize(.small)
                     }
                 }
             }
@@ -1910,8 +1921,8 @@ struct CropVideoView: View {
                 Spacer().frame(width: formLabelWidth)
                 Text(L.text(
                     language,
-                    "Drag the rectangle to move it. Drag the corner dots to resize it. Fixed ratios are preserved while resizing. The original video is kept unchanged.",
-                    "拖动矩形可以移动裁剪区域，拖动四角圆点可以调整大小。选择固定比例时，调整大小会保持该比例。原视频会保持不变。"
+                    "Drag the rectangle to move it. Drag the corner dots to resize it. Fixed ratios are preserved while resizing. Auto detect estimates black bars and then leaves the crop editable. The original video is kept unchanged.",
+                    "拖动矩形可以移动裁剪区域，拖动四角圆点可以调整大小。选择固定比例时，调整大小会保持该比例。自动检测会估算黑边并保留可编辑的裁剪框。原视频会保持不变。"
                 ))
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -1931,6 +1942,7 @@ struct CropVideoView: View {
             previewPixelSize = .zero
             cropRect = defaultCropRect()
             previewError = ""
+            isDetectingBlackBars = false
             if !newValue.isEmpty {
                 loadPreview(for: newValue)
             }
@@ -1958,6 +1970,45 @@ struct CropVideoView: View {
             ],
             inputForDuration: input
         ) { completedOutput = $0 }
+    }
+
+    private func detectBlackBars() {
+        let requestedPath = input
+        guard !requestedPath.isEmpty, previewPixelSize.width > 0, previewPixelSize.height > 0 else { return }
+
+        isDetectingBlackBars = true
+        previewError = ""
+        runner.progress = 0
+        runner.status = L.text(language, "Detecting black bars…", "正在检测黑边…")
+        runner.log = L.text(
+            language,
+            "Detecting black bars with FFmpeg cropdetect…\n",
+            "正在使用 FFmpeg cropdetect 检测黑边…\n"
+        )
+
+        Task {
+            do {
+                let params = try await Self.detectCropParameters(path: requestedPath)
+                guard input == requestedPath else { return }
+                selectedAspectRatio = "free"
+                cropRect = cropRect(from: params)
+                runner.progress = 1
+                runner.status = L.text(language, "Black bars detected ✓", "黑边检测完成 ✓")
+                runner.log += L.text(
+                    language,
+                    "Detected crop: \(params.width)×\(params.height) at x=\(params.x), y=\(params.y)\n",
+                    "检测到裁剪：\(params.width)×\(params.height)，x=\(params.x)，y=\(params.y)\n"
+                )
+            } catch {
+                guard input == requestedPath else { return }
+                previewError = L.text(language, "Could not detect black bars.", "无法检测黑边。")
+                runner.status = L.text(language, "Black-bar detection failed", "黑边检测失败")
+                runner.log += "ERROR: \(error.localizedDescription)\n"
+            }
+            if input == requestedPath {
+                isDetectingBlackBars = false
+            }
+        }
     }
 
     private func loadPreview(for path: String) {
@@ -2022,6 +2073,96 @@ struct CropVideoView: View {
         }.value
     }
 
+    private static func detectCropParameters(path: String) async throws -> CropParameters {
+        try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: FFmpegRunner.resolveBinary("ffmpeg"))
+            process.arguments = [
+                "-hide_banner",
+                "-i", path,
+                "-vf", "cropdetect=limit=24:round=2:reset=0",
+                "-frames:v", "180",
+                "-f", "null",
+                "-"
+            ]
+            process.standardOutput = Pipe()
+            let errorPipe = Pipe()
+            process.standardError = errorPipe
+
+            try process.run()
+            process.waitUntilExit()
+
+            let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            let crops = parseCropDetectOutput(output)
+
+            if process.terminationStatus != 0 {
+                throw NSError(domain: "SimpleVideo", code: Int(process.terminationStatus), userInfo: [
+                    NSLocalizedDescriptionKey: output.trimmingCharacters(in: .whitespacesAndNewlines)
+                ])
+            }
+
+            guard let crop = bestCrop(from: crops) else {
+                throw NSError(domain: "SimpleVideo", code: 3, userInfo: [
+                    NSLocalizedDescriptionKey: "ffmpeg cropdetect did not report a crop rectangle"
+                ])
+            }
+
+            return crop
+        }.value
+    }
+
+    nonisolated private static func parseCropDetectOutput(_ output: String) -> [CropParameters] {
+        let pattern = #"crop=(\d+):(\d+):(\d+):(\d+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
+        return regex.matches(in: output, range: nsRange).compactMap { match in
+            guard match.numberOfRanges == 5,
+                  let width = intCapture(match, 1, in: output),
+                  let height = intCapture(match, 2, in: output),
+                  let x = intCapture(match, 3, in: output),
+                  let y = intCapture(match, 4, in: output),
+                  width > 0, height > 0 else {
+                return nil
+            }
+            return CropParameters(x: x, y: y, width: width, height: height)
+        }
+    }
+
+    nonisolated private static func intCapture(_ match: NSTextCheckingResult, _ index: Int, in text: String) -> Int? {
+        guard let range = Range(match.range(at: index), in: text) else { return nil }
+        return Int(text[range])
+    }
+
+    nonisolated private static func bestCrop(from crops: [CropParameters]) -> CropParameters? {
+        guard !crops.isEmpty else { return nil }
+
+        struct Candidate {
+            var params: CropParameters
+            var count: Int
+            var lastIndex: Int
+        }
+
+        var candidates: [String: Candidate] = [:]
+        for (index, crop) in crops.enumerated() {
+            let key = "\(crop.width):\(crop.height):\(crop.x):\(crop.y)"
+            if var candidate = candidates[key] {
+                candidate.count += 1
+                candidate.lastIndex = index
+                candidates[key] = candidate
+            } else {
+                candidates[key] = Candidate(params: crop, count: 1, lastIndex: index)
+            }
+        }
+
+        return candidates.values
+            .sorted {
+                if $0.count != $1.count { return $0.count > $1.count }
+                return $0.lastIndex > $1.lastIndex
+            }
+            .first?.params
+    }
+
     private func evenInt(_ value: CGFloat) -> Int {
         let integer = max(0, Int(value.rounded(.down)))
         return integer - (integer % 2)
@@ -2071,6 +2212,18 @@ struct CropVideoView: View {
         let x = min(max(rect.minX, 0), 1 - width)
         let y = min(max(rect.minY, 0), 1 - height)
         return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func cropRect(from params: CropParameters) -> CGRect {
+        guard previewPixelSize.width > 0, previewPixelSize.height > 0 else {
+            return cropRect
+        }
+        return clampCropRect(CGRect(
+            x: CGFloat(params.x) / previewPixelSize.width,
+            y: CGFloat(params.y) / previewPixelSize.height,
+            width: CGFloat(params.width) / previewPixelSize.width,
+            height: CGFloat(params.height) / previewPixelSize.height
+        ))
     }
 }
 
