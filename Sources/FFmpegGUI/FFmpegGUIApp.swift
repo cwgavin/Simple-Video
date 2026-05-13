@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import AVFoundation
 
 // MARK: - App entry
 
@@ -1540,7 +1541,7 @@ struct CropParameters {
 }
 
 private enum CropHandle {
-    case topLeft, topRight, bottomLeft, bottomRight
+    case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
 }
 
 private struct CropAspectRatioOption: Identifiable, Hashable {
@@ -1559,8 +1560,55 @@ private struct CropAspectRatioOption: Identifiable, Hashable {
     }
 }
 
+private final class CropPlayerPreviewNSView: NSView {
+    private let playerLayer = AVPlayerLayer()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer = CALayer()
+        layer?.backgroundColor = NSColor.black.cgColor
+        playerLayer.videoGravity = .resizeAspect
+        layer?.addSublayer(playerLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        playerLayer.frame = bounds
+    }
+
+    func setPlayer(_ player: AVPlayer?) {
+        if playerLayer.player !== player {
+            playerLayer.player = player
+        }
+    }
+}
+
+private struct CropPlayerPreviewView: NSViewRepresentable {
+    let player: AVPlayer?
+
+    func makeNSView(context: Context) -> CropPlayerPreviewNSView {
+        let view = CropPlayerPreviewNSView()
+        view.setPlayer(player)
+        return view
+    }
+
+    func updateNSView(_ nsView: CropPlayerPreviewNSView, context: Context) {
+        nsView.setPlayer(player)
+    }
+
+    static func dismantleNSView(_ nsView: CropPlayerPreviewNSView, coordinator: ()) {
+        nsView.setPlayer(nil)
+    }
+}
+
 struct CropEditorView: View {
-    let image: NSImage
+    let image: NSImage?
+    let player: AVPlayer?
     let imagePixelSize: CGSize
     let fixedAspectRatio: CGFloat?
     @Binding var cropRect: CGRect
@@ -1579,11 +1627,18 @@ struct CropEditorView: View {
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.86)
 
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: displayRect.width, height: displayRect.height)
-                    .position(x: displayRect.midX, y: displayRect.midY)
+                if player != nil {
+                    CropPlayerPreviewView(player: player)
+                        .frame(width: displayRect.width, height: displayRect.height)
+                        .position(x: displayRect.midX, y: displayRect.midY)
+                        .allowsHitTesting(false)
+                } else if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: displayRect.width, height: displayRect.height)
+                        .position(x: displayRect.midX, y: displayRect.midY)
+                }
 
                 if displayRect.width > 0, displayRect.height > 0 {
                     overlayMask(displayRect: displayRect)
@@ -1643,19 +1698,41 @@ struct CropEditorView: View {
                 .gesture(moveGesture(displayRect: displayRect))
 
             handle(.topLeft, at: CGPoint(x: crop.minX, y: crop.minY), displayRect: displayRect)
+            handle(.top, at: CGPoint(x: crop.midX, y: crop.minY), displayRect: displayRect)
             handle(.topRight, at: CGPoint(x: crop.maxX, y: crop.minY), displayRect: displayRect)
-            handle(.bottomLeft, at: CGPoint(x: crop.minX, y: crop.maxY), displayRect: displayRect)
+            handle(.right, at: CGPoint(x: crop.maxX, y: crop.midY), displayRect: displayRect)
             handle(.bottomRight, at: CGPoint(x: crop.maxX, y: crop.maxY), displayRect: displayRect)
+            handle(.bottom, at: CGPoint(x: crop.midX, y: crop.maxY), displayRect: displayRect)
+            handle(.bottomLeft, at: CGPoint(x: crop.minX, y: crop.maxY), displayRect: displayRect)
+            handle(.left, at: CGPoint(x: crop.minX, y: crop.midY), displayRect: displayRect)
         }
     }
 
     private func handle(_ handle: CropHandle, at point: CGPoint, displayRect: CGRect) -> some View {
-        Circle()
-            .fill(Color.accentColor)
-            .frame(width: 14, height: 14)
-            .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+        handleShape(handle)
             .position(point)
             .gesture(resizeGesture(handle, displayRect: displayRect))
+    }
+
+    @ViewBuilder
+    private func handleShape(_ handle: CropHandle) -> some View {
+        switch handle {
+        case .topLeft, .topRight, .bottomRight, .bottomLeft:
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 14, height: 14)
+                .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+        case .top, .bottom:
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color.accentColor)
+                .frame(width: 32, height: 8)
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white, lineWidth: 1))
+        case .left, .right:
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color.accentColor)
+                .frame(width: 8, height: 32)
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white, lineWidth: 1))
+        }
     }
 
     private func moveGesture(displayRect: CGRect) -> some Gesture {
@@ -1690,17 +1767,27 @@ struct CropEditorView: View {
                     next.origin.y += dy
                     next.size.width -= dx
                     next.size.height -= dy
+                case .top:
+                    next.origin.y += dy
+                    next.size.height -= dy
                 case .topRight:
                     next.origin.y += dy
                     next.size.width += dx
                     next.size.height -= dy
+                case .right:
+                    next.size.width += dx
+                case .bottomRight:
+                    next.size.width += dx
+                    next.size.height += dy
+                case .bottom:
+                    next.size.height += dy
                 case .bottomLeft:
                     next.origin.x += dx
                     next.size.width -= dx
                     next.size.height += dy
-                case .bottomRight:
-                    next.size.width += dx
-                    next.size.height += dy
+                case .left:
+                    next.origin.x += dx
+                    next.size.width -= dx
                 }
 
                 if let fixedAspectRatio {
@@ -1731,6 +1818,10 @@ struct CropEditorView: View {
             return clampedMovingCropRect(proposed)
         }
 
+        if !isCorner(handle) {
+            return aspectLockedEdgeCropRect(proposed: proposed, edge: handle, aspectRatio: aspectRatio)
+        }
+
         let minSize: CGFloat = 0.03
         let anchor: CGPoint
         let maxWidth: CGFloat
@@ -1753,6 +1844,8 @@ struct CropEditorView: View {
             anchor = CGPoint(x: start.minX, y: start.minY)
             maxWidth = 1 - anchor.x
             maxHeight = 1 - anchor.y
+        default:
+            return clampedMovingCropRect(proposed)
         }
 
         let proposedWidth = max(minSize, abs(proposed.width))
@@ -1784,7 +1877,66 @@ struct CropEditorView: View {
             return CGRect(x: anchor.x - width, y: anchor.y, width: width, height: height)
         case .bottomRight:
             return CGRect(x: anchor.x, y: anchor.y, width: width, height: height)
+        default:
+            return clampedMovingCropRect(proposed)
         }
+    }
+
+    private func isCorner(_ handle: CropHandle) -> Bool {
+        switch handle {
+        case .topLeft, .topRight, .bottomRight, .bottomLeft:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func aspectLockedEdgeCropRect(proposed: CGRect, edge: CropHandle, aspectRatio: CGFloat) -> CGRect {
+        guard let start = resizeStart else { return clampedMovingCropRect(proposed) }
+
+        let minSize: CGFloat = 0.03
+        var width: CGFloat
+        var height: CGFloat
+        var center = CGPoint(x: start.midX, y: start.midY)
+
+        switch edge {
+        case .left:
+            width = max(minSize, start.maxX - proposed.minX)
+            height = width / aspectRatio
+            center.x = start.maxX - width / 2
+        case .right:
+            width = max(minSize, proposed.maxX - start.minX)
+            height = width / aspectRatio
+            center.x = start.minX + width / 2
+        case .top:
+            height = max(minSize, start.maxY - proposed.minY)
+            width = height * aspectRatio
+            center.y = start.maxY - height / 2
+        case .bottom:
+            height = max(minSize, proposed.maxY - start.minY)
+            width = height * aspectRatio
+            center.y = start.minY + height / 2
+        default:
+            return clampedMovingCropRect(proposed)
+        }
+
+        width = min(width, 1)
+        height = min(height, 1)
+        if width / aspectRatio > 1 {
+            width = aspectRatio
+            height = 1
+        }
+        if height * aspectRatio > 1 {
+            height = 1 / aspectRatio
+            width = 1
+        }
+
+        return clampedMovingCropRect(CGRect(
+            x: center.x - width / 2,
+            y: center.y - height / 2,
+            width: width,
+            height: height
+        ))
     }
 }
 
@@ -1800,6 +1952,12 @@ struct CropVideoView: View {
     @State private var isDetectingBlackBars = false
     @State private var previewError = ""
     @State private var completedOutput = ""
+    @State private var player: AVPlayer?
+    @State private var playbackTime: Double = 0
+    @State private var playbackDuration: Double = 0
+    @State private var isPlaying = false
+    @State private var showingLargeEditor = false
+    @State private var playbackTimeObserver: Any?
 
     private let aspectRatioOptions = [
         CropAspectRatioOption(id: "free", ratio: nil),
@@ -1858,9 +2016,10 @@ struct CropVideoView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     ZStack {
-                        if let previewImage {
+                        if previewImage != nil {
                             CropEditorView(
                                 image: previewImage,
+                                player: player,
                                 imagePixelSize: previewPixelSize,
                                 fixedAspectRatio: selectedAspectRatioOption.ratio,
                                 cropRect: $cropRect
@@ -1881,6 +2040,9 @@ struct CropVideoView: View {
                                 .frame(minHeight: 320)
                         }
                     }
+                    .frame(minHeight: 320)
+
+                    playbackControls
 
                     if !previewError.isEmpty {
                         Text(previewError)
@@ -1905,6 +2067,12 @@ struct CropVideoView: View {
                             Label(L.text(language, "Auto detect black bars", "自动检测黑边"), systemImage: "wand.and.stars")
                         }
                         .disabled(input.isEmpty || previewImage == nil || isLoadingPreview || isDetectingBlackBars || runner.isRunning)
+                        Button {
+                            showingLargeEditor = true
+                        } label: {
+                            Label(L.text(language, "Full-screen crop", "全屏裁剪"), systemImage: "arrow.up.left.and.arrow.down.right")
+                        }
+                        .disabled(previewImage == nil)
                         Button(L.text(language, "Reset crop", "重置裁剪")) {
                             cropRect = defaultCropRect()
                         }
@@ -1921,8 +2089,8 @@ struct CropVideoView: View {
                 Spacer().frame(width: formLabelWidth)
                 Text(L.text(
                     language,
-                    "Drag the rectangle to move it. Drag the corner dots to resize it. Fixed ratios are preserved while resizing. Auto detect estimates black bars and then leaves the crop editable. The original video is kept unchanged.",
-                    "拖动矩形可以移动裁剪区域，拖动四角圆点可以调整大小。选择固定比例时，调整大小会保持该比例。自动检测会估算黑边并保留可编辑的裁剪框。原视频会保持不变。"
+                    "Use playback controls or the progress slider to choose a frame. Drag the rectangle to move it, or drag corners and edges to resize it. Fixed ratios are preserved while resizing. Auto detect estimates black bars and then leaves the crop editable. The original video is kept unchanged.",
+                    "可以用播放按钮或进度条选择画面。拖动矩形可以移动裁剪区域，拖动四角和四条边可以调整大小。选择固定比例时，调整大小会保持该比例。自动检测会估算黑边并保留可编辑的裁剪框。原视频会保持不变。"
                 ))
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -1936,6 +2104,38 @@ struct CropVideoView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding()
+        .sheet(isPresented: $showingLargeEditor) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(L.text(language, "Crop area", "裁剪区域"))
+                        .font(.headline)
+                    Spacer()
+                    Button(L.text(language, "Done", "完成")) {
+                        showingLargeEditor = false
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+                CropEditorView(
+                    image: previewImage,
+                    player: player,
+                    imagePixelSize: previewPixelSize,
+                    fixedAspectRatio: selectedAspectRatioOption.ratio,
+                    cropRect: $cropRect
+                )
+                .frame(minWidth: 1000, minHeight: 620)
+                playbackControls
+            }
+            .padding()
+            .frame(minWidth: 1080, minHeight: 740)
+        }
+        .onAppear {
+            if !input.isEmpty, player == nil {
+                setupPlayback(for: input)
+            }
+        }
+        .onDisappear {
+            cleanupPlayback()
+        }
         .onChange(of: input) { _, newValue in
             completedOutput = ""
             previewImage = nil
@@ -1943,6 +2143,8 @@ struct CropVideoView: View {
             cropRect = defaultCropRect()
             previewError = ""
             isDetectingBlackBars = false
+            showingLargeEditor = false
+            setupPlayback(for: newValue)
             if !newValue.isEmpty {
                 loadPreview(for: newValue)
             }
@@ -1950,6 +2152,146 @@ struct CropVideoView: View {
         .onChange(of: selectedAspectRatio) { _, _ in
             cropRect = adjustedCropRect(cropRect, for: selectedAspectRatioOption.ratio)
         }
+    }
+
+    @ViewBuilder
+    private var playbackControls: some View {
+        if player != nil {
+            HStack(spacing: 8) {
+                Button {
+                    togglePlayback()
+                } label: {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .frame(width: 18)
+                }
+                .disabled(playbackDuration <= 0)
+
+                Slider(
+                    value: Binding(
+                        get: { playbackTime },
+                        set: { seek(to: $0) }
+                    ),
+                    in: 0...max(playbackDuration, 0.01)
+                )
+                .disabled(playbackDuration <= 0)
+
+                Text("\(formatPlaybackTime(playbackTime)) / \(formatPlaybackTime(playbackDuration))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 92, alignment: .trailing)
+            }
+        }
+    }
+
+    private func setupPlayback(for path: String) {
+        cleanupPlayback(resetState: true)
+
+        guard !path.isEmpty else {
+            return
+        }
+
+        let url = URL(fileURLWithPath: path)
+        let asset = AVURLAsset(url: url)
+        let item = AVPlayerItem(asset: asset)
+        let newPlayer = AVPlayer(playerItem: item)
+        newPlayer.actionAtItemEnd = .pause
+        player = newPlayer
+
+        playbackTimeObserver = newPlayer.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+            queue: .main
+        ) { [weak newPlayer] time in
+            guard let observedPlayer = newPlayer else { return }
+            let currentSeconds = CMTimeGetSeconds(time)
+            if currentSeconds.isFinite {
+                playbackTime = min(max(currentSeconds, 0), max(playbackDuration, currentSeconds))
+            }
+            isPlaying = observedPlayer.timeControlStatus == .playing
+        }
+
+        Task {
+            do {
+                let duration = try await asset.load(.duration)
+                let durationSeconds = CMTimeGetSeconds(duration)
+                await MainActor.run {
+                    guard player === newPlayer else { return }
+                    playbackDuration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : 0
+                }
+            } catch {
+                await MainActor.run {
+                    guard player === newPlayer else { return }
+                    runner.log += "WARNING: Could not read video duration: \(error.localizedDescription)\n"
+                }
+            }
+        }
+    }
+
+    private func cleanupPlayback(resetState: Bool = false) {
+        if let playbackTimeObserver, let player {
+            player.removeTimeObserver(playbackTimeObserver)
+        }
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        player = nil
+        playbackTimeObserver = nil
+        isPlaying = false
+
+        if resetState {
+            playbackTime = 0
+            playbackDuration = 0
+        }
+    }
+
+    private func togglePlayback() {
+        guard let player else { return }
+        updatePlaybackTime()
+        if isPlaying {
+            player.pause()
+            isPlaying = false
+        } else {
+            if playbackDuration > 0, playbackTime >= playbackDuration - 0.05 {
+                seek(to: 0)
+            }
+            player.play()
+            isPlaying = true
+        }
+    }
+
+    private func seek(to seconds: Double) {
+        let bounded = min(max(seconds, 0), max(playbackDuration, 0))
+        playbackTime = bounded
+        player?.seek(to: CMTime(seconds: bounded, preferredTimescale: 600))
+    }
+
+    private func updatePlaybackTime() {
+        guard let player else {
+            isPlaying = false
+            return
+        }
+
+        let currentSeconds = CMTimeGetSeconds(player.currentTime())
+        if currentSeconds.isFinite {
+            playbackTime = min(max(currentSeconds, 0), max(playbackDuration, currentSeconds))
+        }
+
+        if playbackDuration <= 0, let itemDuration = player.currentItem?.duration {
+            let durationSeconds = CMTimeGetSeconds(itemDuration)
+            if durationSeconds.isFinite && durationSeconds > 0 {
+                playbackDuration = durationSeconds
+            }
+        }
+
+        isPlaying = player.timeControlStatus == .playing
+        if playbackDuration > 0, playbackTime >= playbackDuration - 0.05, player.timeControlStatus != .playing {
+            isPlaying = false
+        }
+    }
+
+    private func formatPlaybackTime(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0:00" }
+        let wholeSeconds = Int(seconds.rounded(.down))
+        return String(format: "%d:%02d", wholeSeconds / 60, wholeSeconds % 60)
     }
 
     private func runCrop() {
