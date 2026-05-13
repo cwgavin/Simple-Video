@@ -27,6 +27,8 @@ struct FFmpegGUIApp: App {
 enum FFTask: String, CaseIterable, Identifiable, Hashable {
     case mergeAV = "Merge A/V"
     case concat = "Concatenate"
+    case split = "Split by Timestamps"
+    case cutRange = "Remove Time Range"
     case convert = "Convert Video"
     case convertAudio = "Convert Audio"
     case transcribe = "Transcribe"
@@ -38,6 +40,8 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .mergeAV:       return "plus.square.on.square"
         case .concat:        return "text.line.first.and.arrowtriangle.forward"
+        case .split:         return "scissors"
+        case .cutRange:      return "timeline.selection"
         case .convert:       return "arrow.triangle.2.circlepath"
         case .convertAudio:  return "waveform"
         case .transcribe:    return "text.bubble"
@@ -108,6 +112,31 @@ final class FFmpegRunner: ObservableObject {
             return Double(s) ?? 0
         } catch {
             return 0
+        }
+    }
+
+    nonisolated static func hasAudioStream(_ path: String) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: resolveBinary("ffprobe"))
+        p.arguments = [
+            "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=codec_type",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path
+        ]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        do {
+            try p.run()
+            p.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let s = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return !s.isEmpty
+        } catch {
+            return false
         }
     }
 
@@ -380,9 +409,93 @@ func makeOutputPath(input: String, ext: String) -> String {
     return "\(dir)/\(stamp).\(ext)"
 }
 
+func makeOutputDirectory(input: String, label: String) -> String {
+    let url = URL(fileURLWithPath: input)
+    let dir = url.deletingLastPathComponent().path
+    let baseName = url.deletingPathExtension().lastPathComponent
+    let fmt = DateFormatter()
+    fmt.dateFormat = "yyyyMMdd-HHmmss-SSS"
+    let stamp = fmt.string(from: Date())
+    return "\(dir)/\(baseName)-\(label)-\(stamp)"
+}
+
 func inputExt(_ path: String) -> String {
     let e = (path as NSString).pathExtension
     return e.isEmpty ? "mp4" : e
+}
+
+func parseTimestamp(_ raw: String) -> Double? {
+    let parts = raw.split(separator: ":", omittingEmptySubsequences: false)
+    guard (1...3).contains(parts.count) else { return nil }
+
+    var values: [Double] = []
+    for part in parts {
+        let trimmed = part.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, let value = Double(trimmed), value >= 0 else { return nil }
+        values.append(value)
+    }
+
+    switch values.count {
+    case 1:
+        return values[0]
+    case 2:
+        guard values[1] < 60 else { return nil }
+        return values[0] * 60 + values[1]
+    case 3:
+        guard values[1] < 60, values[2] < 60 else { return nil }
+        return values[0] * 3600 + values[1] * 60 + values[2]
+    default:
+        return nil
+    }
+}
+
+enum TimestampParseResult {
+    case success([Double])
+    case failure(String)
+}
+
+func parseTimestampList(_ raw: String) -> TimestampParseResult {
+    let tokens = raw
+        .components(separatedBy: CharacterSet(charactersIn: ",;\n"))
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+
+    guard !tokens.isEmpty else {
+        return .failure("Enter at least one timestamp.")
+    }
+
+    var seconds: [Double] = []
+    for token in tokens {
+        guard let value = parseTimestamp(token), value > 0 else {
+            return .failure("Invalid timestamp: \(token)")
+        }
+        seconds.append(value)
+    }
+
+    let sorted = seconds.sorted()
+    guard sorted == seconds else {
+        return .failure("Timestamps must be in ascending order.")
+    }
+    guard Set(seconds).count == seconds.count else {
+        return .failure("Timestamps must be unique.")
+    }
+
+    return .success(seconds)
+}
+
+func ffmpegTimestampList(_ seconds: [Double]) -> String {
+    seconds
+        .map { value in
+            let text = String(format: "%.3f", value)
+            return text.replacingOccurrences(of: #"(\.\d*?[1-9])0+$|\.0+$"#,
+                                             with: "$1",
+                                             options: .regularExpression)
+        }
+        .joined(separator: ",")
+}
+
+func ffmpegTime(_ seconds: Double) -> String {
+    ffmpegTimestampList([seconds])
 }
 
 private let formLabelWidth: CGFloat = 100
@@ -821,6 +934,206 @@ struct ConcatView: View {
     }
 }
 
+struct SplitByTimestampsView: View {
+    @EnvironmentObject var runner: FFmpegRunner
+    @State private var input = ""
+    @State private var timestamps = ""
+    @State private var completedOutput = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            FilePickerRow(label: "Input video:", path: $input, contentTypes: [.movie, .video, .audiovisualContent])
+
+            HStack(alignment: .top) {
+                Text("Timestamps:").frame(width: formLabelWidth, alignment: .trailing)
+                VStack(alignment: .leading, spacing: 6) {
+                    TextEditor(text: $timestamps)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 120)
+                        .padding(4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color(nsColor: .separatorColor))
+                        )
+                    Text("One split point per line, or separate with commas. Example: 00:00:10, 00:00:35.5, 00:01:12")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("The original video is kept. New clips are written into a timestamped folder next to it.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            OutputHintRow(path: completedOutput)
+            RunButton(canRun: !input.isEmpty && !timestamps.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                runSplit()
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding()
+        .onChange(of: input) { _, _ in completedOutput = "" }
+        .onChange(of: timestamps) { _, _ in completedOutput = "" }
+    }
+
+    private func runSplit() {
+        let parsed: [Double]
+        switch parseTimestampList(timestamps) {
+        case .success(let values):
+            parsed = values
+        case .failure(let message):
+            runner.log = "⚠️  \(message)\n"
+            runner.status = "Invalid timestamps"
+            return
+        }
+
+        let outputDirectory = makeOutputDirectory(input: input, label: "segments")
+        do {
+            try FileManager.default.createDirectory(
+                atPath: outputDirectory,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+        } catch {
+            runner.log = "ERROR: \(error.localizedDescription)\n"
+            runner.status = "Failed to create output folder"
+            return
+        }
+
+        let ext = inputExt(input)
+        let outputPattern = (outputDirectory as NSString).appendingPathComponent("segment-%03d.\(ext)")
+
+        runner.run(
+            args: [
+                "-i", input,
+                "-map", "0",
+                "-c", "copy",
+                "-f", "segment",
+                "-segment_times", ffmpegTimestampList(parsed),
+                "-reset_timestamps", "1",
+                "-y", outputPattern
+            ],
+            inputForDuration: input
+        ) { _ in
+            completedOutput = outputDirectory
+        }
+    }
+}
+
+struct CutRangeView: View {
+    @EnvironmentObject var runner: FFmpegRunner
+    @State private var input = ""
+    @State private var startTimestamp = ""
+    @State private var endTimestamp = ""
+    @State private var completedOutput = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            FilePickerRow(label: "Input video:", path: $input, contentTypes: [.movie, .video, .audiovisualContent])
+
+            HStack {
+                Text("Start:").frame(width: formLabelWidth, alignment: .trailing)
+                TextField("00:00:10", text: $startTimestamp)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 180)
+                Spacer()
+            }
+
+            HStack {
+                Text("End:").frame(width: formLabelWidth, alignment: .trailing)
+                TextField("00:00:20", text: $endTimestamp)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 180)
+                Spacer()
+            }
+
+            HStack(alignment: .top) {
+                Spacer().frame(width: formLabelWidth)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("The section between the two timestamps is removed and the remaining parts are joined into one new video.")
+                    Text("The original video is kept unchanged.")
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+
+            OutputHintRow(path: completedOutput)
+            RunButton(canRun: !input.isEmpty && !startTimestamp.isEmpty && !endTimestamp.isEmpty) {
+                runCutRange()
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding()
+        .onChange(of: input) { _, _ in completedOutput = "" }
+        .onChange(of: startTimestamp) { _, _ in completedOutput = "" }
+        .onChange(of: endTimestamp) { _, _ in completedOutput = "" }
+    }
+
+    private func runCutRange() {
+        let start: Double
+        let end: Double
+
+        guard let parsedStart = parseTimestamp(startTimestamp.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            runner.log = "⚠️  Invalid start timestamp.\n"
+            runner.status = "Invalid timestamps"
+            return
+        }
+        guard let parsedEnd = parseTimestamp(endTimestamp.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            runner.log = "⚠️  Invalid end timestamp.\n"
+            runner.status = "Invalid timestamps"
+            return
+        }
+
+        start = parsedStart
+        end = parsedEnd
+
+        guard end > start else {
+            runner.log = "⚠️  End timestamp must be greater than start timestamp.\n"
+            runner.status = "Invalid timestamps"
+            return
+        }
+
+        let duration = FFmpegRunner.probeDuration(input)
+        if duration > 0 {
+            guard start < duration else {
+                runner.log = "⚠️  Start timestamp must be inside the video duration.\n"
+                runner.status = "Invalid timestamps"
+                return
+            }
+            guard end <= duration else {
+                runner.log = "⚠️  End timestamp must be inside the video duration.\n"
+                runner.status = "Invalid timestamps"
+                return
+            }
+            guard !(start == 0 && end == duration) else {
+                runner.log = "⚠️  The selected range removes the entire video.\n"
+                runner.status = "Invalid timestamps"
+                return
+            }
+        }
+
+        let hasAudio = FFmpegRunner.hasAudioStream(input)
+        let startText = ffmpegTime(start)
+        let endText = ffmpegTime(end)
+
+        let videoFilter = "[0:v]select='lt(t,\(startText))+gte(t,\(endText))',setpts=N/FRAME_RATE/TB[v]"
+        let audioFilter = "[0:a]aselect='lt(t,\(startText))+gte(t,\(endText))',asetpts=N/SR/TB[a]"
+        let filterComplex = hasAudio ? "\(videoFilter);\(audioFilter)" : videoFilter
+
+        let out = makeOutputPath(input: input, ext: inputExt(input))
+        var args = ["-i", input, "-filter_complex", filterComplex, "-map", "[v]"]
+        if hasAudio {
+            args += ["-map", "[a]"]
+        }
+        args += ["-y", out]
+
+        runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
+    }
+}
+
 // MARK: - Transcribe
 
 struct TranscribeView: View {
@@ -1038,6 +1351,8 @@ struct ContentView: View {
         switch task {
         case .mergeAV:      MergeAVView()
         case .concat:       ConcatView()
+        case .split:        SplitByTimestampsView()
+        case .cutRange:     CutRangeView()
         case .convert:      ConvertView()
         case .convertAudio: ConvertAudioView()
         case .transcribe:   TranscribeView()

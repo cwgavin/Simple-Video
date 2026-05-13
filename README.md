@@ -9,6 +9,8 @@ Built with **SwiftUI**. Powered by `ffmpeg` and `whisper` under the hood.
 - **Convert** audio between formats (mp3, aac, wav, flac, ogg, m4a, wma, aiff, opus)
 - **Merge** separate video + audio tracks
 - **Concatenate** multiple video or audio files
+- **Split** one video into multiple clips from a list of timestamps
+- **Remove** a section between two timestamps and keep the rest as one video
 - **Transcribe** audio/video to text using OpenAI Whisper
 - Live log output, real-time progress bar, cancel running jobs
 
