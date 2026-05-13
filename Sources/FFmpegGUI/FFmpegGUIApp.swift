@@ -29,6 +29,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
     case concat = "Concatenate"
     case split = "Split by Timestamps"
     case cutRange = "Remove Time Range"
+    case crop = "Crop Video"
     case convert = "Convert Video"
     case convertAudio = "Convert Audio"
     case transcribe = "Transcribe"
@@ -46,6 +47,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
             case .concat:       return "拼接文件"
             case .split:        return "按时间戳分割"
             case .cutRange:     return "移除时间段"
+            case .crop:         return "裁剪画面"
             case .convert:      return "转换视频"
             case .convertAudio: return "转换音频"
             case .transcribe:   return "语音转文字"
@@ -60,6 +62,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
         case .concat:        return "text.line.first.and.arrowtriangle.forward"
         case .split:         return "scissors"
         case .cutRange:      return "timeline.selection"
+        case .crop:          return "crop"
         case .convert:       return "arrow.triangle.2.circlepath"
         case .convertAudio:  return "waveform"
         case .transcribe:    return "text.bubble"
@@ -1529,6 +1532,548 @@ struct CutRangeView: View {
     }
 }
 
+struct CropParameters {
+    let x: Int
+    let y: Int
+    let width: Int
+    let height: Int
+}
+
+private enum CropHandle {
+    case topLeft, topRight, bottomLeft, bottomRight
+}
+
+private struct CropAspectRatioOption: Identifiable, Hashable {
+    let id: String
+    let ratio: CGFloat?
+
+    func title(language: AppLanguage) -> String {
+        switch id {
+        case "free":
+            return L.text(language, "Free", "自由")
+        case "16:9", "9:16", "1:1", "4:3":
+            return id
+        default:
+            return id
+        }
+    }
+}
+
+struct CropEditorView: View {
+    let image: NSImage
+    let imagePixelSize: CGSize
+    let fixedAspectRatio: CGFloat?
+    @Binding var cropRect: CGRect
+
+    @State private var dragStart: CGRect?
+    @State private var resizeStart: CGRect?
+
+    private var imageAspect: CGFloat {
+        guard imagePixelSize.height > 0 else { return 1 }
+        return imagePixelSize.width / imagePixelSize.height
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let displayRect = fittedImageRect(in: geo.size)
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.86)
+
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: displayRect.width, height: displayRect.height)
+                    .position(x: displayRect.midX, y: displayRect.midY)
+
+                if displayRect.width > 0, displayRect.height > 0 {
+                    overlayMask(displayRect: displayRect)
+                    cropBox(displayRect: displayRect)
+                }
+            }
+        }
+        .frame(minHeight: 320)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func fittedImageRect(in size: CGSize) -> CGRect {
+        guard size.width > 0, size.height > 0 else { return .zero }
+        let containerAspect = size.width / size.height
+        let fittedSize: CGSize
+        if containerAspect > imageAspect {
+            let height = size.height
+            fittedSize = CGSize(width: height * imageAspect, height: height)
+        } else {
+            let width = size.width
+            fittedSize = CGSize(width: width, height: width / imageAspect)
+        }
+        return CGRect(
+            x: (size.width - fittedSize.width) / 2,
+            y: (size.height - fittedSize.height) / 2,
+            width: fittedSize.width,
+            height: fittedSize.height
+        )
+    }
+
+    private func displayedCropRect(in imageRect: CGRect) -> CGRect {
+        CGRect(
+            x: imageRect.minX + cropRect.minX * imageRect.width,
+            y: imageRect.minY + cropRect.minY * imageRect.height,
+            width: cropRect.width * imageRect.width,
+            height: cropRect.height * imageRect.height
+        )
+    }
+
+    private func overlayMask(displayRect: CGRect) -> some View {
+        let crop = displayedCropRect(in: displayRect)
+        return Path { path in
+            path.addRect(displayRect)
+            path.addRect(crop)
+        }
+        .fill(Color.black.opacity(0.45), style: FillStyle(eoFill: true))
+    }
+
+    private func cropBox(displayRect: CGRect) -> some View {
+        let crop = displayedCropRect(in: displayRect)
+        return ZStack(alignment: .topLeading) {
+            Rectangle()
+                .strokeBorder(Color.accentColor, lineWidth: 2)
+                .background(Color.accentColor.opacity(0.08))
+                .frame(width: crop.width, height: crop.height)
+                .position(x: crop.midX, y: crop.midY)
+                .gesture(moveGesture(displayRect: displayRect))
+
+            handle(.topLeft, at: CGPoint(x: crop.minX, y: crop.minY), displayRect: displayRect)
+            handle(.topRight, at: CGPoint(x: crop.maxX, y: crop.minY), displayRect: displayRect)
+            handle(.bottomLeft, at: CGPoint(x: crop.minX, y: crop.maxY), displayRect: displayRect)
+            handle(.bottomRight, at: CGPoint(x: crop.maxX, y: crop.maxY), displayRect: displayRect)
+        }
+    }
+
+    private func handle(_ handle: CropHandle, at point: CGPoint, displayRect: CGRect) -> some View {
+        Circle()
+            .fill(Color.accentColor)
+            .frame(width: 14, height: 14)
+            .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+            .position(point)
+            .gesture(resizeGesture(handle, displayRect: displayRect))
+    }
+
+    private func moveGesture(displayRect: CGRect) -> some Gesture {
+        DragGesture()
+            .onChanged { value in
+                if dragStart == nil { dragStart = cropRect }
+                guard let start = dragStart else { return }
+                let dx = value.translation.width / max(displayRect.width, 1)
+                let dy = value.translation.height / max(displayRect.height, 1)
+                cropRect = clampedMovingCropRect(CGRect(
+                    x: start.minX + dx,
+                    y: start.minY + dy,
+                    width: start.width,
+                    height: start.height
+                ))
+            }
+            .onEnded { _ in dragStart = nil }
+    }
+
+    private func resizeGesture(_ handle: CropHandle, displayRect: CGRect) -> some Gesture {
+        DragGesture()
+            .onChanged { value in
+                if resizeStart == nil { resizeStart = cropRect }
+                guard let start = resizeStart else { return }
+                let dx = value.translation.width / max(displayRect.width, 1)
+                let dy = value.translation.height / max(displayRect.height, 1)
+                var next = start
+
+                switch handle {
+                case .topLeft:
+                    next.origin.x += dx
+                    next.origin.y += dy
+                    next.size.width -= dx
+                    next.size.height -= dy
+                case .topRight:
+                    next.origin.y += dy
+                    next.size.width += dx
+                    next.size.height -= dy
+                case .bottomLeft:
+                    next.origin.x += dx
+                    next.size.width -= dx
+                    next.size.height += dy
+                case .bottomRight:
+                    next.size.width += dx
+                    next.size.height += dy
+                }
+
+                if let fixedAspectRatio {
+                    cropRect = aspectLockedCropRect(proposed: next, anchorFor: handle, aspectRatio: normalizedAspectRatio(for: fixedAspectRatio))
+                } else {
+                    cropRect = clampedMovingCropRect(next)
+                }
+            }
+            .onEnded { _ in resizeStart = nil }
+    }
+
+    private func normalizedAspectRatio(for pixelAspectRatio: CGFloat) -> CGFloat {
+        guard imageAspect > 0 else { return pixelAspectRatio }
+        return pixelAspectRatio / imageAspect
+    }
+
+    private func clampedMovingCropRect(_ rect: CGRect) -> CGRect {
+        let minSize: CGFloat = 0.03
+        let width = min(max(rect.width, minSize), 1)
+        let height = min(max(rect.height, minSize), 1)
+        let x = min(max(rect.minX, 0), 1 - width)
+        let y = min(max(rect.minY, 0), 1 - height)
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func aspectLockedCropRect(proposed: CGRect, anchorFor handle: CropHandle, aspectRatio: CGFloat) -> CGRect {
+        guard let start = resizeStart, aspectRatio > 0 else {
+            return clampedMovingCropRect(proposed)
+        }
+
+        let minSize: CGFloat = 0.03
+        let anchor: CGPoint
+        let maxWidth: CGFloat
+        let maxHeight: CGFloat
+
+        switch handle {
+        case .topLeft:
+            anchor = CGPoint(x: start.maxX, y: start.maxY)
+            maxWidth = anchor.x
+            maxHeight = anchor.y
+        case .topRight:
+            anchor = CGPoint(x: start.minX, y: start.maxY)
+            maxWidth = 1 - anchor.x
+            maxHeight = anchor.y
+        case .bottomLeft:
+            anchor = CGPoint(x: start.maxX, y: start.minY)
+            maxWidth = anchor.x
+            maxHeight = 1 - anchor.y
+        case .bottomRight:
+            anchor = CGPoint(x: start.minX, y: start.minY)
+            maxWidth = 1 - anchor.x
+            maxHeight = 1 - anchor.y
+        }
+
+        let proposedWidth = max(minSize, abs(proposed.width))
+        let proposedHeight = max(minSize, abs(proposed.height))
+        var width: CGFloat
+        var height: CGFloat
+
+        if proposedWidth / proposedHeight > aspectRatio {
+            height = proposedHeight
+            width = height * aspectRatio
+        } else {
+            width = proposedWidth
+            height = width / aspectRatio
+        }
+
+        width = min(max(width, minSize), maxWidth, maxHeight * aspectRatio)
+        height = width / aspectRatio
+        if height > maxHeight {
+            height = maxHeight
+            width = height * aspectRatio
+        }
+
+        switch handle {
+        case .topLeft:
+            return CGRect(x: anchor.x - width, y: anchor.y - height, width: width, height: height)
+        case .topRight:
+            return CGRect(x: anchor.x, y: anchor.y - height, width: width, height: height)
+        case .bottomLeft:
+            return CGRect(x: anchor.x - width, y: anchor.y, width: width, height: height)
+        case .bottomRight:
+            return CGRect(x: anchor.x, y: anchor.y, width: width, height: height)
+        }
+    }
+}
+
+struct CropVideoView: View {
+    @EnvironmentObject var runner: FFmpegRunner
+    @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
+    @State private var input = ""
+    @State private var previewImage: NSImage?
+    @State private var previewPixelSize: CGSize = .zero
+    @State private var cropRect = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+    @State private var selectedAspectRatio = "free"
+    @State private var isLoadingPreview = false
+    @State private var previewError = ""
+    @State private var completedOutput = ""
+
+    private let aspectRatioOptions = [
+        CropAspectRatioOption(id: "free", ratio: nil),
+        CropAspectRatioOption(id: "16:9", ratio: 16.0 / 9.0),
+        CropAspectRatioOption(id: "9:16", ratio: 9.0 / 16.0),
+        CropAspectRatioOption(id: "1:1", ratio: 1.0),
+        CropAspectRatioOption(id: "4:3", ratio: 4.0 / 3.0),
+    ]
+
+    private var language: AppLanguage {
+        AppLanguage(rawValue: appLanguageRaw) ?? .english
+    }
+
+    private var selectedAspectRatioOption: CropAspectRatioOption {
+        aspectRatioOptions.first(where: { $0.id == selectedAspectRatio }) ?? aspectRatioOptions[0]
+    }
+
+    private var cropParameters: CropParameters? {
+        guard previewPixelSize.width >= 2, previewPixelSize.height >= 2 else { return nil }
+        let pixelWidth = Int(previewPixelSize.width.rounded(.down))
+        let pixelHeight = Int(previewPixelSize.height.rounded(.down))
+
+        var x = evenInt(cropRect.minX * CGFloat(pixelWidth))
+        var y = evenInt(cropRect.minY * CGFloat(pixelHeight))
+        var width = max(2, evenInt(cropRect.width * CGFloat(pixelWidth)))
+        var height = max(2, evenInt(cropRect.height * CGFloat(pixelHeight)))
+
+        if x + width > pixelWidth { width = max(2, evenInt(CGFloat(pixelWidth - x))) }
+        if y + height > pixelHeight { height = max(2, evenInt(CGFloat(pixelHeight - y))) }
+        if x + width > pixelWidth { x = max(0, evenInt(CGFloat(pixelWidth - width))) }
+        if y + height > pixelHeight { y = max(0, evenInt(CGFloat(pixelHeight - height))) }
+
+        return CropParameters(x: x, y: y, width: width, height: height)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            FilePickerRow(label: L.text(language, "Input video:", "输入视频："), path: $input, contentTypes: [.movie, .video, .audiovisualContent])
+
+            HStack {
+                Text(L.text(language, "Aspect ratio:", "裁剪比例："))
+                    .frame(width: formLabelWidth, alignment: .trailing)
+                Picker("aspect-ratio", selection: $selectedAspectRatio) {
+                    ForEach(aspectRatioOptions) { option in
+                        Text(option.title(language: language)).tag(option.id)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                Spacer()
+            }
+
+            HStack(alignment: .top) {
+                Text(L.text(language, "Crop area:", "裁剪区域："))
+                    .frame(width: formLabelWidth, alignment: .trailing)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    ZStack {
+                        if let previewImage {
+                            CropEditorView(
+                                image: previewImage,
+                                imagePixelSize: previewPixelSize,
+                                fixedAspectRatio: selectedAspectRatioOption.ratio,
+                                cropRect: $cropRect
+                            )
+                        } else {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color(nsColor: .textBackgroundColor))
+                                .overlay {
+                                    if isLoadingPreview {
+                                        ProgressView(L.text(language, "Loading preview…", "正在加载预览…"))
+                                    } else {
+                                        Text(input.isEmpty
+                                             ? L.text(language, "Choose a video to preview the crop area.", "请选择视频以预览裁剪区域。")
+                                             : L.text(language, "Preview unavailable.", "无法显示预览。"))
+                                        .foregroundColor(.secondary)
+                                    }
+                                }
+                                .frame(minHeight: 320)
+                        }
+                    }
+
+                    if !previewError.isEmpty {
+                        Text(previewError)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+
+                    HStack {
+                        if let params = cropParameters {
+                            Text(L.text(
+                                language,
+                                "Crop: \(params.width)×\(params.height) at x=\(params.x), y=\(params.y)",
+                                "裁剪：\(params.width)×\(params.height)，x=\(params.x)，y=\(params.y)"
+                            ))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button(L.text(language, "Reset crop", "重置裁剪")) {
+                            cropRect = defaultCropRect()
+                        }
+                        .disabled(previewImage == nil)
+                    }
+                }
+            }
+
+            HStack(alignment: .top) {
+                Spacer().frame(width: formLabelWidth)
+                Text(L.text(
+                    language,
+                    "Drag the rectangle to move it. Drag the corner dots to resize it. Fixed ratios are preserved while resizing. The original video is kept unchanged.",
+                    "拖动矩形可以移动裁剪区域，拖动四角圆点可以调整大小。选择固定比例时，调整大小会保持该比例。原视频会保持不变。"
+                ))
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+
+            OutputHintRow(path: completedOutput)
+            RunButton(canRun: !input.isEmpty && previewImage != nil && cropParameters != nil && !isLoadingPreview) {
+                runCrop()
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding()
+        .onChange(of: input) { _, newValue in
+            completedOutput = ""
+            previewImage = nil
+            previewPixelSize = .zero
+            cropRect = defaultCropRect()
+            previewError = ""
+            if !newValue.isEmpty {
+                loadPreview(for: newValue)
+            }
+        }
+        .onChange(of: selectedAspectRatio) { _, _ in
+            cropRect = adjustedCropRect(cropRect, for: selectedAspectRatioOption.ratio)
+        }
+    }
+
+    private func runCrop() {
+        guard let params = cropParameters else { return }
+        let out = makeOutputPath(input: input, ext: "mp4")
+        runner.run(
+            args: [
+                "-i", input,
+                "-map", "0:v:0",
+                "-map", "0:a?",
+                "-vf", "crop=\(params.width):\(params.height):\(params.x):\(params.y)",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                "-y", out
+            ],
+            inputForDuration: input
+        ) { completedOutput = $0 }
+    }
+
+    private func loadPreview(for path: String) {
+        let requestedPath = path
+        isLoadingPreview = true
+        previewError = ""
+
+        Task {
+            do {
+                let data = try await Self.generatePreviewFrame(path: requestedPath)
+                guard input == requestedPath else { return }
+                guard let image = NSImage(data: data) else {
+                    throw NSError(domain: "SimpleVideo", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not read preview image"])
+                }
+                guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                    throw NSError(domain: "SimpleVideo", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not read preview dimensions"])
+                }
+                previewImage = image
+                previewPixelSize = CGSize(width: cgImage.width, height: cgImage.height)
+                cropRect = adjustedCropRect(cropRect, for: selectedAspectRatioOption.ratio)
+            } catch {
+                guard input == requestedPath else { return }
+                previewError = L.text(language, "Could not load video preview.", "无法加载视频预览。")
+                runner.log = "ERROR: \(error.localizedDescription)\n"
+            }
+            if input == requestedPath {
+                isLoadingPreview = false
+            }
+        }
+    }
+
+    private static func generatePreviewFrame(path: String) async throws -> Data {
+        try await Task.detached(priority: .userInitiated) {
+            let output = FileManager.default.temporaryDirectory
+                .appendingPathComponent("simple-video-crop-preview-\(UUID().uuidString).png")
+            defer { try? FileManager.default.removeItem(at: output) }
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: FFmpegRunner.resolveBinary("ffmpeg"))
+            process.arguments = [
+                "-hide_banner", "-loglevel", "error", "-y",
+                "-i", path,
+                "-frames:v", "1",
+                output.path
+            ]
+            process.standardOutput = Pipe()
+            let errorPipe = Pipe()
+            process.standardError = errorPipe
+
+            try process.run()
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0 else {
+                let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                let message = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                throw NSError(domain: "SimpleVideo", code: Int(process.terminationStatus), userInfo: [
+                    NSLocalizedDescriptionKey: message?.isEmpty == false ? message! : "ffmpeg failed to create preview"
+                ])
+            }
+
+            return try Data(contentsOf: output)
+        }.value
+    }
+
+    private func evenInt(_ value: CGFloat) -> Int {
+        let integer = max(0, Int(value.rounded(.down)))
+        return integer - (integer % 2)
+    }
+
+    private func defaultCropRect() -> CGRect {
+        adjustedCropRect(CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8), for: selectedAspectRatioOption.ratio)
+    }
+
+    private func adjustedCropRect(_ rect: CGRect, for pixelAspectRatio: CGFloat?) -> CGRect {
+        guard let pixelAspectRatio, pixelAspectRatio > 0,
+              previewPixelSize.width > 0, previewPixelSize.height > 0 else {
+            return clampCropRect(rect)
+        }
+
+        let normalizedAspect = pixelAspectRatio / (previewPixelSize.width / previewPixelSize.height)
+        var width = min(rect.width, 0.96)
+        var height = width / normalizedAspect
+
+        if height > 0.96 {
+            height = min(rect.height, 0.96)
+            width = height * normalizedAspect
+        }
+
+        if width > 0.96 {
+            width = 0.96
+            height = width / normalizedAspect
+        }
+        if height > 0.96 {
+            height = 0.96
+            width = height * normalizedAspect
+        }
+
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        return clampCropRect(CGRect(
+            x: center.x - width / 2,
+            y: center.y - height / 2,
+            width: width,
+            height: height
+        ))
+    }
+
+    private func clampCropRect(_ rect: CGRect) -> CGRect {
+        let minSize: CGFloat = 0.03
+        let width = min(max(rect.width, minSize), 1)
+        let height = min(max(rect.height, minSize), 1)
+        let x = min(max(rect.minX, 0), 1 - width)
+        let y = min(max(rect.minY, 0), 1 - height)
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+}
+
 // MARK: - Transcribe
 
 struct TranscribeView: View {
@@ -2114,6 +2659,7 @@ struct ContentView: View {
         case .concat:       ConcatView()
         case .split:        SplitByTimestampsView()
         case .cutRange:     CutRangeView()
+        case .crop:         CropVideoView()
         case .convert:      ConvertView()
         case .convertAudio: ConvertAudioView()
         case .transcribe:   TranscribeView()
