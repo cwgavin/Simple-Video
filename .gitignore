@@ -2,5 +2,8 @@
 .build/
 Simple Video.app/
 FFmpeg GUI.app/
+dist/
 *.xcodeproj/
 Package.resolved
+Resources/bin/
+Resources/whisper-models/
