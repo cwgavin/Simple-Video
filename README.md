@@ -1,5 +1,7 @@
 # Simple Video
 
+[简体中文](README.zh-CN.md)
+
 A native macOS app providing a simple UI for common video & audio operations.
 Built with **SwiftUI**. Powered by `ffmpeg` and `whisper.cpp` under the hood.
 
