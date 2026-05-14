@@ -535,6 +535,8 @@ struct CropEditorView: View {
 }
 
 struct CropVideoView: View {
+    let isActive: Bool
+
     @EnvironmentObject var runner: FFmpegRunner
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
     @State private var input = ""
@@ -745,12 +747,25 @@ struct CropVideoView: View {
             .frame(minWidth: 1080, minHeight: 740)
         }
         .onAppear {
-            if !input.isEmpty, player == nil {
+            if isActive, !input.isEmpty, player == nil {
                 setupPlayback(for: input, resetTrimRange: trimEnd <= 0)
             }
         }
         .onDisappear {
             cleanupPlayback()
+        }
+        .onChange(of: isActive) { _, active in
+            if active {
+                if !input.isEmpty, player == nil {
+                    setupPlayback(for: input, resetTrimRange: trimEnd <= 0)
+                }
+                if !input.isEmpty, previewImage == nil, !isLoadingPreview {
+                    loadPreview(for: input)
+                }
+            } else {
+                showingLargeEditor = false
+                cleanupPlayback()
+            }
         }
         .onChange(of: input) { _, newValue in
             completedOutput = ""
@@ -761,8 +776,12 @@ struct CropVideoView: View {
             previewError = ""
             isDetectingBlackBars = false
             showingLargeEditor = false
-            setupPlayback(for: newValue, resetTrimRange: true)
-            if !newValue.isEmpty {
+            if isActive {
+                setupPlayback(for: newValue, resetTrimRange: true)
+            } else {
+                cleanupPlayback(resetState: true, resetTrimRange: true)
+            }
+            if isActive, !newValue.isEmpty {
                 loadPreview(for: newValue)
             }
         }

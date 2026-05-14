@@ -13,9 +13,9 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func detail(for task: FFTask) -> some View {
+    private func detail(for task: FFTask, isActive: Bool = true) -> some View {
         switch task {
-        case .crop:         CropVideoView()
+        case .crop:         CropVideoView(isActive: isActive)
         case .mergeAV:      MergeAVView()
         case .concat:       ConcatView()
         case .split:        SplitByTimestampsView()
@@ -40,9 +40,17 @@ struct ContentView: View {
                 Group {
                     if let sel = selection {
                         GeometryReader { geo in
-                            ScrollView {
-                                detail(for: sel)
-                                    .frame(minHeight: geo.size.height)
+                            ZStack(alignment: .topLeading) {
+                                ForEach(FFTask.allCases) { task in
+                                    ScrollView {
+                                        detail(for: task, isActive: sel == task)
+                                            .frame(minHeight: geo.size.height)
+                                    }
+                                    .opacity(sel == task ? 1 : 0)
+                                    .allowsHitTesting(sel == task)
+                                    .accessibilityHidden(sel != task)
+                                    .zIndex(sel == task ? 1 : 0)
+                                }
                             }
                         }
                     } else {
