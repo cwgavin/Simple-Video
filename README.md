@@ -5,22 +5,30 @@ Built with **SwiftUI**. Powered by `ffmpeg` and `whisper.cpp` under the hood.
 
 ## Features
 
+- **Crop** a video visually with draggable crop handles, aspect-ratio presets, auto black-bar detection, and an optional start/end trim range with preview
 - **Convert** video between formats / codecs (mp4, mov, mkv, webm, avi, flv, m4v, ts)
 - **Convert** audio between formats (mp3, aac, wav, flac, ogg, m4a, wma, aiff, opus)
 - **Merge** separate video + audio tracks
 - **Concatenate** multiple video or audio files
 - **Split** one video into multiple clips from a list of timestamps
 - **Remove** a section between two timestamps and keep the rest as one video
-- **Crop** a video visually with a draggable crop box and optional start/end trim range
 - **Transcribe** audio/video to text using Whisper
-- Live log output, real-time progress bar, cancel running jobs
+- Language setting for English and Simplified Chinese, plus third-party license links
+- Collapsible live log output, real-time progress bar, cancel running jobs
 
 ## Requirements
 
+For the packaged app:
+
 - macOS 14+
+- Bundled `ffmpeg`, `ffprobe`, and `whisper-cli` executables for a self-contained build
+- Whisper models are downloaded by users in the app
+
+For local development or packaging:
+
 - Swift 5.9+ (ships with Xcode or Command Line Tools — `xcode-select --install`)
-- `ffmpeg` / `ffprobe` for local development if you do not bundle them
-- `whisper.cpp` CLI for transcription; Whisper models are downloaded by users in the app
+- `ffmpeg` / `ffprobe` available in `Resources/bin/`, via the `SIMPLE_VIDEO_FFMPEG_BIN` / `SIMPLE_VIDEO_FFPROBE_BIN` environment variables, or in a standard local install path
+- `whisper-cli` from `whisper.cpp` available in `Resources/bin/`, via `SIMPLE_VIDEO_WHISPER_BIN`, or in a standard local install path
 
 ## Build
 
@@ -63,9 +71,11 @@ or during `./build.sh`:
   - `ffprobe`
   - `whisper-cli`
 
-`build.sh` copies those files into `Simple Video.app/Contents/Resources/`.
-If `Resources/bin/` does not already contain them, it also tries standard local
-install locations.
+`build.sh` copies those files into `Simple Video.app/Contents/Resources/`,
+bundles their non-system dynamic libraries into `Contents/Frameworks`, and
+ad-hoc signs the result. If `Resources/bin/` does not already contain the
+tools, it also tries the environment variables above and standard local install
+locations.
 
 Example with Homebrew / a local whisper.cpp checkout:
 
