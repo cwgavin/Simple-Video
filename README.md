@@ -11,7 +11,7 @@ Built with **SwiftUI**. Powered by `ffmpeg` and `whisper.cpp` under the hood.
 - **Concatenate** multiple video or audio files
 - **Split** one video into multiple clips from a list of timestamps
 - **Remove** a section between two timestamps and keep the rest as one video
-- **Crop** a video visually with a draggable crop box
+- **Crop** a video visually with a draggable crop box and optional start/end trim range
 - **Transcribe** audio/video to text using Whisper
 - Live log output, real-time progress bar, cancel running jobs
 
