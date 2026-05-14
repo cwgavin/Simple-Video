@@ -7,7 +7,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "SimpleVideo",
-            path: "Sources/FFmpegGUI"
+            path: "Sources/SimpleVideo"
         )
     ]
 )

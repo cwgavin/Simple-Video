@@ -4,7 +4,7 @@ import AppKit
 // MARK: - App entry
 
 @main
-struct FFmpegGUIApp: App {
+struct SimpleVideoApp: App {
     init() {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
