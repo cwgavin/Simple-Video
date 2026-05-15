@@ -258,22 +258,23 @@ struct OutputHintRow: View {
             if path.isEmpty {
                 Spacer()
             } else {
-                Text(path)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundColor(.green)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting(
-                        [URL(fileURLWithPath: path)])
-                } label: {
-                    Image(systemName: "folder")
+                HStack(spacing: 6) {
+                    Text(path)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.green)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            [URL(fileURLWithPath: path)])
+                    } label: {
+                        Image(systemName: "folder")
+                    }
+                    .help(L.text(language, "Reveal in Finder", "在 Finder 中显示"))
+                    .buttonStyle(.borderless)
+                    .pointingHandCursor()
                 }
-                .help(L.text(language, "Reveal in Finder", "在 Finder 中显示"))
-                .buttonStyle(.borderless)
-                .pointingHandCursor()
                 Spacer(minLength: 0)
             }
         }

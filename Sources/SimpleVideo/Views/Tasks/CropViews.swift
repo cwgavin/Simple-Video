@@ -18,6 +18,52 @@ private enum TrimHandleSelection {
     case start, end
 }
 
+private enum CropPreviewPlaybackMode {
+    case original
+    case compatibilityProxy
+}
+
+private enum CropExportQualityOption: String, CaseIterable, Identifiable {
+    case highest
+    case balanced
+    case smaller
+
+    var id: String { rawValue }
+
+    func title(language: AppLanguage) -> String {
+        switch self {
+        case .highest:
+            return L.text(language, "Highest quality", "最高画质")
+        case .balanced:
+            return L.text(language, "Balanced", "均衡")
+        case .smaller:
+            return L.text(language, "Smaller file", "更小文件")
+        }
+    }
+
+    func summary(language: AppLanguage) -> String {
+        switch self {
+        case .highest:
+            return L.text(language, "Slower export, less visible recompression.", "导出更慢，重编码痕迹更少。")
+        case .balanced:
+            return L.text(language, "Good default quality and speed balance.", "默认推荐，兼顾画质和速度。")
+        case .smaller:
+            return L.text(language, "Faster to store and share, with more compression.", "体积更小，更适合分享，但压缩更明显。")
+        }
+    }
+
+    var videoArguments: [String] {
+        switch self {
+        case .highest:
+            return ["-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv420p"]
+        case .balanced:
+            return ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
+        case .smaller:
+            return ["-c:v", "libx264", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p"]
+        }
+    }
+}
+
 private struct CropAspectRatioOption: Identifiable, Hashable {
     let id: String
     let ratio: CGFloat?
@@ -580,6 +626,13 @@ struct CropVideoView: View {
     @State private var trimEnd: Double = 0
     @State private var selectedTrimHandle: TrimHandleSelection = .start
     @State private var trimFrameDuration: Double?
+    @State private var exportQuality = CropExportQualityOption.balanced
+    @State private var previewPlaybackMode: CropPreviewPlaybackMode = .original
+    @State private var previewProxyPath: String?
+    @State private var isGeneratingPreviewProxy = false
+    @State private var proxyGenerationTask: Task<Void, Never>?
+    @State private var proxyGenerationProcess: Process?
+    @State private var proxyGenerationID: UInt = 0
 
     private let aspectRatioOptions = [
         CropAspectRatioOption(id: "free", ratio: nil),
@@ -624,6 +677,19 @@ struct CropVideoView: View {
         if y + height > pixelHeight { y = max(0, evenInt(CGFloat(pixelHeight - height))) }
 
         return CropParameters(x: x, y: y, width: width, height: height)
+    }
+
+    private var isUsingPreviewProxy: Bool {
+        previewPlaybackMode == .compatibilityProxy
+    }
+
+    private var hasVisualCrop: Bool {
+        guard let params = cropParameters else { return false }
+        return !isFullFrameCrop(params)
+    }
+
+    private var requiresVideoReencode: Bool {
+        hasVisualCrop || selectedTrimRange != nil
     }
 
     var body: some View {
@@ -676,6 +742,28 @@ struct CropVideoView: View {
                     .frame(minHeight: 320)
 
                     playbackControls
+
+                    if isGeneratingPreviewProxy {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(L.text(
+                                language,
+                                "Preparing a compatibility preview for this video…",
+                                "正在为这个视频准备兼容预览…"
+                            ))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        }
+                    } else if isUsingPreviewProxy {
+                        Text(L.text(
+                            language,
+                            "Using a temporary compatibility preview. Export still uses the original video.",
+                            "当前使用临时兼容预览，最终导出仍然使用原始视频。"
+                        ))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    }
 
                     Text(L.text(
                         language,
@@ -736,6 +824,12 @@ struct CropVideoView: View {
                 trimControls
             }
 
+            HStack(alignment: .top) {
+                Text(L.text(language, "Export mode:", "导出方式："))
+                    .frame(width: formLabelWidth, alignment: .trailing)
+                exportControls
+            }
+
             OutputHintRow(path: completedOutput)
             RunButton(canRun: !input.isEmpty && previewImage != nil && cropParameters != nil && !isLoadingPreview) {
                 runCrop()
@@ -774,23 +868,23 @@ struct CropVideoView: View {
         }
         .onAppear {
             if isActive, !input.isEmpty, player == nil {
-                setupPlayback(for: input, resetTrimRange: trimEnd <= 0)
+                startPreviewSession(for: input, resetTrimRange: trimEnd <= 0)
             }
         }
         .onDisappear {
-            cleanupPlayback()
+            cleanupPreviewSession()
         }
         .onChange(of: isActive) { _, active in
             if active {
                 if !input.isEmpty, player == nil {
-                    setupPlayback(for: input, resetTrimRange: trimEnd <= 0)
+                    startPreviewSession(for: input, resetTrimRange: trimEnd <= 0)
                 }
                 if !input.isEmpty, previewImage == nil, !isLoadingPreview {
                     loadPreview(for: input)
                 }
             } else {
                 showingLargeEditor = false
-                cleanupPlayback()
+                cleanupPreviewSession()
             }
         }
         .onChange(of: input) { _, newValue in
@@ -803,9 +897,9 @@ struct CropVideoView: View {
             isDetectingBlackBars = false
             showingLargeEditor = false
             if isActive {
-                setupPlayback(for: newValue, resetTrimRange: true)
+                startPreviewSession(for: newValue, resetTrimRange: true)
             } else {
-                cleanupPlayback(resetState: true, resetTrimRange: true)
+                cleanupPreviewSession(resetState: true, resetTrimRange: true)
             }
             if isActive, !newValue.isEmpty {
                 loadPreview(for: newValue)
@@ -998,6 +1092,78 @@ struct CropVideoView: View {
     }
 
     @ViewBuilder
+    private var exportControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if hasVisualCrop {
+                HStack {
+                    Picker(
+                        L.text(language, "Export quality", "导出画质"),
+                        selection: $exportQuality
+                    ) {
+                        ForEach(CropExportQualityOption.allCases) { option in
+                            Text(option.title(language: language)).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    Spacer()
+                }
+
+                Text(L.text(
+                    language,
+                    "Changing the crop area requires re-encoding. Choose the quality and file size tradeoff you want.",
+                    "只要改变了画面裁剪区域，就必须重编码；可以在这里选择画质和体积之间的取舍。"
+                ))
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+                Text(exportQuality.summary(language: language))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else if selectedTrimRange != nil {
+                Text(L.text(
+                    language,
+                    "Changing the time range always uses frame-accurate export, so the cut lands exactly where you set it.",
+                    "只要改动了时间范围，就会始终使用逐帧精确导出，确保起止点严格落在你设定的位置。"
+                ))
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+                HStack {
+                    Picker(
+                        L.text(language, "Export quality", "导出画质"),
+                        selection: $exportQuality
+                    ) {
+                        ForEach(CropExportQualityOption.allCases) { option in
+                            Text(option.title(language: language)).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    Spacer()
+                }
+
+                Text(exportQuality.summary(language: language))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                Text(L.text(
+                    language,
+                    "No image crop detected. This export will use stream copy, so the original video and audio stay untouched.",
+                    "当前没有画面裁剪，会使用 stream copy，原始视频和音频码流都会保持不变。"
+                ))
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var playbackControlsDisabled: Bool {
+        playbackDuration <= 0 || isGeneratingPreviewProxy
+    }
+
+    @ViewBuilder
     private var playbackControls: some View {
         if player != nil {
             HStack(spacing: 8) {
@@ -1008,7 +1174,7 @@ struct CropVideoView: View {
                         .frame(width: 18)
                 }
                 .disabled(playbackDuration <= 0)
-                .pointingHandCursor(enabled: playbackDuration > 0)
+                .pointingHandCursor(enabled: !playbackControlsDisabled)
 
                 Button("2x") {
                     togglePlaybackSpeed()
@@ -1016,7 +1182,7 @@ struct CropVideoView: View {
                 .buttonStyle(.bordered)
                 .tint(isDoubleSpeedPlayback ? .accentColor : .secondary)
                 .disabled(playbackDuration <= 0)
-                .pointingHandCursor(enabled: playbackDuration > 0)
+                .pointingHandCursor(enabled: !playbackControlsDisabled)
 
                 Text(L.text(language, "Preview playhead:", "预览播放头："))
                     .font(.caption)
@@ -1037,23 +1203,45 @@ struct CropVideoView: View {
                     .monospacedDigit()
                     .frame(width: 92, alignment: .trailing)
             }
+            .disabled(playbackControlsDisabled)
         }
     }
 
-    private func setupPlayback(for path: String, resetTrimRange: Bool) {
-        cleanupPlayback(resetState: true, resetTrimRange: resetTrimRange)
+    private func startPreviewSession(for path: String, resetTrimRange: Bool) {
+        cleanupPreviewProxy()
+        setupPlayback(previewPath: path, metadataPath: path, resetTrimRange: resetTrimRange)
+        preparePreviewProxyFallback(for: path)
+    }
 
-        guard !path.isEmpty else {
+    private func setupPlayback(
+        previewPath: String,
+        metadataPath: String,
+        resetTrimRange: Bool,
+        preservePlaybackState: Bool = false
+    ) {
+        let preservedTime = preservePlaybackState
+            ? min(max(playbackTime, 0), max(playbackDuration, 0))
+            : 0
+        let shouldResumePlayback = preservePlaybackState && isPlaying
+        let shouldKeepTrimPreview = preservePlaybackState && isPreviewingTrim
+        let shouldKeepTrimPreviewPaused = preservePlaybackState && isTrimPreviewPaused
+
+        cleanupPlayback(resetState: !preservePlaybackState, resetTrimRange: resetTrimRange)
+
+        guard !previewPath.isEmpty, !metadataPath.isEmpty else {
             return
         }
 
-        let url = URL(fileURLWithPath: path)
-        let asset = AVURLAsset(url: url)
-        let item = AVPlayerItem(asset: asset)
+        let previewAsset = AVURLAsset(url: URL(fileURLWithPath: previewPath))
+        let item = AVPlayerItem(asset: previewAsset)
         let newPlayer = AVPlayer(playerItem: item)
         newPlayer.actionAtItemEnd = .pause
         player = newPlayer
         trimFrameDuration = nil
+        previewPlaybackMode = previewPath == metadataPath ? .original : .compatibilityProxy
+        playbackTime = preservedTime
+        isPreviewingTrim = shouldKeepTrimPreview
+        isTrimPreviewPaused = shouldKeepTrimPreviewPaused
 
         playbackTimeObserver = newPlayer.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
@@ -1075,10 +1263,29 @@ struct CropVideoView: View {
             isPlaying = observedPlayer.timeControlStatus == .playing
         }
 
+        if preservedTime > 0 {
+            newPlayer.seek(
+                to: CMTime(seconds: preservedTime, preferredTimescale: 600),
+                toleranceBefore: .zero,
+                toleranceAfter: .zero
+            ) { finished in
+                DispatchQueue.main.async {
+                    guard finished, self.player === newPlayer else { return }
+                    self.playbackTime = preservedTime
+                    if shouldResumePlayback {
+                        self.startPlayback(using: newPlayer)
+                    }
+                }
+            }
+        } else if shouldResumePlayback {
+            startPlayback(using: newPlayer)
+        }
+
         Task {
             do {
-                let duration = try await asset.load(.duration)
-                let frameDuration = try await loadFrameDuration(from: asset)
+                let metadataAsset = AVURLAsset(url: URL(fileURLWithPath: metadataPath))
+                let duration = try await metadataAsset.load(.duration)
+                let frameDuration = try await loadFrameDuration(from: metadataAsset)
                 let durationSeconds = CMTimeGetSeconds(duration)
                 await MainActor.run {
                     guard player === newPlayer else { return }
@@ -1097,6 +1304,90 @@ struct CropVideoView: View {
                 await MainActor.run {
                     guard player === newPlayer else { return }
                     runner.log += "WARNING: Could not read video duration: \(error.localizedDescription)\n"
+                }
+            }
+        }
+    }
+
+    private func preparePreviewProxyFallback(for path: String) {
+        proxyGenerationTask?.cancel()
+        proxyGenerationTask = nil
+
+        guard !path.isEmpty else {
+            isGeneratingPreviewProxy = false
+            return
+        }
+
+        proxyGenerationID &+= 1
+        let requestID = proxyGenerationID
+
+        proxyGenerationTask = Task {
+            defer {
+                Task { @MainActor in
+                    guard proxyGenerationID == requestID else { return }
+                    proxyGenerationTask = nil
+                }
+            }
+
+            let requiresProxy = await Self.requiresPreviewProxy(path: path)
+            guard !Task.isCancelled else { return }
+
+            if !requiresProxy {
+                await MainActor.run {
+                    guard input == path, proxyGenerationID == requestID else { return }
+                    isGeneratingPreviewProxy = false
+                }
+                return
+            }
+
+            await MainActor.run {
+                guard input == path, proxyGenerationID == requestID else { return }
+                isGeneratingPreviewProxy = true
+            }
+
+            do {
+                let proxyPath = try await Self.generatePreviewProxy(path: path) { process in
+                    await MainActor.run {
+                        guard input == path, proxyGenerationID == requestID else {
+                            return false
+                        }
+                        proxyGenerationProcess = process
+                        return true
+                    }
+                }
+                guard !Task.isCancelled else {
+                    try? FileManager.default.removeItem(atPath: proxyPath)
+                    return
+                }
+
+                let shouldAdopt = await MainActor.run { () -> Bool in
+                    guard input == path, proxyGenerationID == requestID else { return false }
+                    previewProxyPath = proxyPath
+                    proxyGenerationProcess = nil
+                    isGeneratingPreviewProxy = false
+                    return true
+                }
+                guard shouldAdopt else {
+                    try? FileManager.default.removeItem(atPath: proxyPath)
+                    return
+                }
+
+                await MainActor.run {
+                    setupPlayback(
+                        previewPath: proxyPath,
+                        metadataPath: path,
+                        resetTrimRange: false,
+                        preservePlaybackState: true
+                    )
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run {
+                    guard input == path, proxyGenerationID == requestID else { return }
+                    proxyGenerationProcess = nil
+                    isGeneratingPreviewProxy = false
+                    runner.log += "WARNING: Could not create a compatibility preview: \(error.localizedDescription)\n"
                 }
             }
         }
@@ -1122,6 +1413,29 @@ struct CropVideoView: View {
             trimStart = 0
             trimEnd = 0
         }
+    }
+
+    private func cleanupPreviewProxy() {
+        proxyGenerationID &+= 1
+        proxyGenerationTask?.cancel()
+        proxyGenerationTask = nil
+
+        if let process = proxyGenerationProcess, process.isRunning {
+            process.terminate()
+        }
+        proxyGenerationProcess = nil
+
+        if let previewProxyPath {
+            try? FileManager.default.removeItem(atPath: previewProxyPath)
+        }
+        previewProxyPath = nil
+        previewPlaybackMode = .original
+        isGeneratingPreviewProxy = false
+    }
+
+    private func cleanupPreviewSession(resetState: Bool = false, resetTrimRange: Bool = false) {
+        cleanupPlayback(resetState: resetState, resetTrimRange: resetTrimRange)
+        cleanupPreviewProxy()
     }
 
     private func togglePlayback() {
@@ -1357,13 +1671,6 @@ struct CropVideoView: View {
             playbackTime = min(max(currentSeconds, 0), max(playbackDuration, currentSeconds))
         }
 
-        if playbackDuration <= 0, let itemDuration = player.currentItem?.duration {
-            let durationSeconds = CMTimeGetSeconds(itemDuration)
-            if durationSeconds.isFinite && durationSeconds > 0 {
-                playbackDuration = durationSeconds
-            }
-        }
-
         isPlaying = player.timeControlStatus == .playing
         if playbackDuration > 0, playbackTime >= playbackDuration - 0.05, player.timeControlStatus != .playing {
             isPlaying = false
@@ -1378,29 +1685,68 @@ struct CropVideoView: View {
 
     private func runCrop() {
         guard let params = cropParameters else { return }
-        let out = makeOutputPath(input: input, ext: "mp4")
-        if let trimRange = selectedTrimRange {
-            var args = ["-ss", ffmpegTime(trimRange.start), "-i", input, "-t", ffmpegTime(trimRange.end - trimRange.start)]
-            args += cropOutputArguments(params: params, output: out)
-            runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
-        } else {
-            let args = ["-i", input] + cropOutputArguments(params: params, output: out)
-            runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
+
+        if requiresVideoReencode {
+            let out = makeOutputPath(input: input, ext: "mp4")
+            if let trimRange = selectedTrimRange {
+                var args = ["-i", input, "-ss", ffmpegTime(trimRange.start), "-t", ffmpegTime(trimRange.end - trimRange.start)]
+                args += reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
+                runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
+            } else {
+                let args = ["-i", input] + reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
+                runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
+            }
+            return
         }
+
+        let out = makeOutputPath(input: input, ext: inputExt(input))
+        let args: [String]
+        if let trimRange = selectedTrimRange {
+            args = [
+                "-ss", ffmpegTime(trimRange.start),
+                "-i", input,
+                "-t", ffmpegTime(trimRange.end - trimRange.start)
+            ] + copyOutputArguments(output: out)
+        } else {
+            args = ["-i", input] + copyOutputArguments(output: out)
+        }
+        runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
     }
 
-    private func cropOutputArguments(params: CropParameters, output: String) -> [String] {
-        [
-            "-map", "0:v:0",
-            "-map", "0:a?",
-            "-vf", "crop=\(params.width):\(params.height):\(params.x):\(params.y)",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
+    private func reencodedOutputArguments(output: String, cropParameters: CropParameters?) -> [String] {
+        var args: [String] = ["-map", "0:v:0", "-map", "0:a?"]
+        if let cropParameters {
+            args += ["-vf", "crop=\(cropParameters.width):\(cropParameters.height):\(cropParameters.x):\(cropParameters.y)"]
+        }
+        args += exportQuality.videoArguments
+        args += [
             "-c:a", "aac",
             "-b:a", "192k",
             "-movflags", "+faststart",
             "-y", output
         ]
+        return args
+    }
+
+    private func copyOutputArguments(output: String) -> [String] {
+        var args = ["-map", "0", "-c", "copy"]
+        let ext = (output as NSString).pathExtension.lowercased()
+        if ["mp4", "mov", "m4v"].contains(ext) {
+            args += ["-movflags", "+faststart"]
+        }
+        args += ["-y", output]
+        return args
+    }
+
+    private func isFullFrameCrop(_ params: CropParameters) -> Bool {
+        let pixelWidth = Int(previewPixelSize.width.rounded(.down))
+        let pixelHeight = Int(previewPixelSize.height.rounded(.down))
+        guard pixelWidth > 0, pixelHeight > 0 else { return false }
+
+        return abs(params.x) <= 1
+            && abs(params.y) <= 1
+            && abs(params.width - pixelWidth) <= 2
+            && abs(params.height - pixelHeight) <= 2
     }
 
     private func detectBlackBars() {
@@ -1501,6 +1847,90 @@ struct CropVideoView: View {
             }
 
             return try Data(contentsOf: output)
+        }.value
+    }
+
+    private static func requiresPreviewProxy(path: String) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            let sampleTimes = [0.0, 0.1, 1.0, 2.0]
+            let url = URL(fileURLWithPath: path)
+
+            for seconds in sampleTimes {
+                let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+                generator.appliesPreferredTrackTransform = true
+                generator.requestedTimeToleranceBefore = .positiveInfinity
+                generator.requestedTimeToleranceAfter = .positiveInfinity
+
+                if (try? generator.copyCGImage(
+                    at: CMTime(seconds: seconds, preferredTimescale: 600),
+                    actualTime: nil
+                )) != nil {
+                    return false
+                }
+            }
+
+            return true
+        }.value
+    }
+
+    private static func generatePreviewProxy(
+        path: String,
+        onStart: @escaping @Sendable (Process) async -> Bool
+    ) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            let output = FileManager.default.temporaryDirectory
+                .appendingPathComponent("simple-video-crop-proxy-\(UUID().uuidString).mp4")
+            var shouldKeepOutput = false
+            defer {
+                if !shouldKeepOutput {
+                    try? FileManager.default.removeItem(at: output)
+                }
+            }
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: FFmpegRunner.resolveBinary("ffmpeg"))
+            process.arguments = [
+                "-hide_banner", "-loglevel", "error", "-y",
+                "-i", path,
+                "-map", "0:v:0",
+                "-map", "0:a?",
+                "-vf", "scale=if(gte(iw\\,ih)\\,min(1280\\,iw)\\,-2):if(gte(iw\\,ih)\\,-2\\,min(1280\\,ih))",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "23",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                output.path
+            ]
+            process.standardOutput = Pipe()
+            let errorPipe = Pipe()
+            process.standardError = errorPipe
+
+            guard await onStart(process) else {
+                throw CancellationError()
+            }
+
+            try Task.checkCancellation()
+            try process.run()
+            FFmpegRunner.trackProcess(process)
+            defer { FFmpegRunner.untrackProcess(process) }
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0 else {
+                let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                let message = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                throw NSError(domain: "SimpleVideo", code: Int(process.terminationStatus), userInfo: [
+                    NSLocalizedDescriptionKey: message?.isEmpty == false
+                        ? message!
+                        : "ffmpeg failed to create a compatibility preview"
+                ])
+            }
+
+            shouldKeepOutput = true
+            return output.path
         }.value
     }
 
