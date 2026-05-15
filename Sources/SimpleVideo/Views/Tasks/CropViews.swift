@@ -765,14 +765,6 @@ struct CropVideoView: View {
                         .foregroundColor(.secondary)
                     }
 
-                    Text(L.text(
-                        language,
-                        "Use playback controls or the progress slider to choose a frame. Drag the rectangle to move the crop area, or drag corners and edges to resize it. Auto detect estimates black bars and keeps the crop editable.",
-                        "可以用播放按钮或进度条选择画面。拖动矩形可以移动裁剪区域，拖动四角和四条边可以调整大小。自动检测会估算黑边，并保留可编辑的裁剪框。"
-                    ))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
                     if !previewError.isEmpty {
                         Text(previewError)
                             .font(.caption)
