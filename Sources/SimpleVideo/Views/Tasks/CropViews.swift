@@ -23,6 +23,70 @@ private enum CropPreviewPlaybackMode {
     case compatibilityProxy
 }
 
+private enum CropPlaybackRateOption: Double, CaseIterable, Identifiable {
+    case half = 0.5
+    case threeQuarter = 0.75
+    case normal = 1.0
+    case oneAndQuarter = 1.25
+    case oneAndHalf = 1.5
+    case double = 2.0
+
+    var id: Double { rawValue }
+
+    func title(language: AppLanguage) -> String {
+        if rawValue == 1.0 {
+            return L.text(language, "1.0× (Normal)", "1.0×（正常）")
+        }
+        return String(format: "%.2gx", rawValue)
+    }
+}
+
+enum CropPreviewArtifacts {
+    private static let proxyPrefix = "simple-video-crop-proxy-"
+    private static let previewPrefix = "simple-video-crop-preview-"
+    nonisolated(unsafe) private static var trackedPaths: Set<String> = []
+    nonisolated private static let lock = NSLock()
+
+    static func register(_ path: String) {
+        lock.lock()
+        trackedPaths.insert(path)
+        lock.unlock()
+    }
+
+    static func unregister(_ path: String) {
+        lock.lock()
+        trackedPaths.remove(path)
+        lock.unlock()
+    }
+
+    static func cleanupAll() {
+        let fm = FileManager.default
+
+        lock.lock()
+        let tracked = Array(trackedPaths)
+        trackedPaths.removeAll()
+        lock.unlock()
+
+        for path in tracked {
+            try? fm.removeItem(atPath: path)
+        }
+
+        guard let urls = try? fm.contentsOfDirectory(
+            at: fm.temporaryDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        for url in urls {
+            let name = url.lastPathComponent
+            guard name.hasPrefix(proxyPrefix) || name.hasPrefix(previewPrefix) else { continue }
+            try? fm.removeItem(at: url)
+        }
+    }
+}
+
 private enum CropExportQualityOption: String, CaseIterable, Identifiable {
     case highest
     case balanced
@@ -619,7 +683,6 @@ struct CropVideoView: View {
     @State private var isPlaying = false
     @State private var isPreviewingTrim = false
     @State private var isTrimPreviewPaused = false
-    @State private var isDoubleSpeedPlayback = false
     @State private var showingLargeEditor = false
     @State private var playbackTimeObserver: Any?
     @State private var trimStart: Double = 0
@@ -627,6 +690,7 @@ struct CropVideoView: View {
     @State private var selectedTrimHandle: TrimHandleSelection = .start
     @State private var trimFrameDuration: Double?
     @State private var exportQuality = CropExportQualityOption.balanced
+    @State private var exportPlaybackRate = CropPlaybackRateOption.normal
     @State private var previewPlaybackMode: CropPreviewPlaybackMode = .original
     @State private var previewProxyPath: String?
     @State private var isGeneratingPreviewProxy = false
@@ -689,7 +753,7 @@ struct CropVideoView: View {
     }
 
     private var requiresVideoReencode: Bool {
-        hasVisualCrop || selectedTrimRange != nil
+        hasVisualCrop || selectedTrimRange != nil || exportPlaybackRate != .normal
     }
 
     var body: some View {
@@ -1013,6 +1077,7 @@ struct CropVideoView: View {
                         } label: {
                             Label(L.text(language, "Previous frame", "前一帧"), systemImage: "chevron.left")
                         }
+                        .buttonRepeatBehavior(.enabled)
                         .disabled(trimFrameDuration == nil)
                         .pointingHandCursor(enabled: trimFrameDuration != nil)
 
@@ -1021,6 +1086,7 @@ struct CropVideoView: View {
                         } label: {
                             Label(L.text(language, "Next frame", "后一帧"), systemImage: "chevron.right")
                         }
+                        .buttonRepeatBehavior(.enabled)
                         .disabled(trimFrameDuration == nil)
                         .pointingHandCursor(enabled: trimFrameDuration != nil)
 
@@ -1080,12 +1146,34 @@ struct CropVideoView: View {
     }
 
     private var playbackRate: Float {
-        isDoubleSpeedPlayback ? 2.0 : 1.0
+        Float(exportPlaybackRate.rawValue)
     }
 
     @ViewBuilder
     private var exportControls: some View {
         VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Picker(
+                    L.text(language, "Playback rate", "播放倍率"),
+                    selection: $exportPlaybackRate
+                ) {
+                    ForEach(CropPlaybackRateOption.allCases) { option in
+                        Text(option.title(language: language)).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                Spacer()
+            }
+
+            Text(L.text(
+                language,
+                "Preview playback uses this rate, and the exported video keeps the same playback speed.",
+                "预览播放会使用这个倍率，导出视频也会保持相同的播放速度。"
+            ))
+            .font(.caption)
+            .foregroundColor(.secondary)
+
             if hasVisualCrop {
                 HStack {
                     Picker(
@@ -1101,26 +1189,28 @@ struct CropVideoView: View {
                     Spacer()
                 }
 
-                Text(L.text(
-                    language,
-                    "Changing the crop area requires re-encoding. Choose the quality and file size tradeoff you want.",
-                    "只要改变了画面裁剪区域，就必须重编码；可以在这里选择画质和体积之间的取舍。"
-                ))
-                .font(.caption)
-                .foregroundColor(.secondary)
-
                 Text(exportQuality.summary(language: language))
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else if selectedTrimRange != nil {
-                Text(L.text(
-                    language,
-                    "Changing the time range always uses frame-accurate export, so the cut lands exactly where you set it.",
-                    "只要改动了时间范围，就会始终使用逐帧精确导出，确保起止点严格落在你设定的位置。"
-                ))
-                .font(.caption)
-                .foregroundColor(.secondary)
+                HStack {
+                    Picker(
+                        L.text(language, "Export quality", "导出画质"),
+                        selection: $exportQuality
+                    ) {
+                        ForEach(CropExportQualityOption.allCases) { option in
+                            Text(option.title(language: language)).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    Spacer()
+                    }
 
+                    Text(exportQuality.summary(language: language))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+            } else if exportPlaybackRate != .normal {
                 HStack {
                     Picker(
                         L.text(language, "Export quality", "导出画质"),
@@ -1139,13 +1229,6 @@ struct CropVideoView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else {
-                Text(L.text(
-                    language,
-                    "No image crop detected. This export will use stream copy, so the original video and audio stay untouched.",
-                    "当前没有画面裁剪，会使用 stream copy，原始视频和音频码流都会保持不变。"
-                ))
-                .font(.caption)
-                .foregroundColor(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1165,14 +1248,6 @@ struct CropVideoView: View {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .frame(width: 18)
                 }
-                .disabled(playbackDuration <= 0)
-                .pointingHandCursor(enabled: !playbackControlsDisabled)
-
-                Button("2x") {
-                    togglePlaybackSpeed()
-                }
-                .buttonStyle(.bordered)
-                .tint(isDoubleSpeedPlayback ? .accentColor : .secondary)
                 .disabled(playbackDuration <= 0)
                 .pointingHandCursor(enabled: !playbackControlsDisabled)
 
@@ -1355,6 +1430,7 @@ struct CropVideoView: View {
                 let shouldAdopt = await MainActor.run { () -> Bool in
                     guard input == path, proxyGenerationID == requestID else { return false }
                     previewProxyPath = proxyPath
+                    CropPreviewArtifacts.register(proxyPath)
                     proxyGenerationProcess = nil
                     isGeneratingPreviewProxy = false
                     return true
@@ -1418,6 +1494,7 @@ struct CropVideoView: View {
         proxyGenerationProcess = nil
 
         if let previewProxyPath {
+            CropPreviewArtifacts.unregister(previewProxyPath)
             try? FileManager.default.removeItem(atPath: previewProxyPath)
         }
         previewProxyPath = nil
@@ -1453,30 +1530,6 @@ struct CropVideoView: View {
             isTrimPreviewPaused = false
             startPlayback(using: player)
         }
-    }
-
-    private func togglePlaybackSpeed() {
-        guard let player, playbackDuration > 0 else { return }
-
-        isDoubleSpeedPlayback.toggle()
-        updatePlaybackTime()
-
-        if isPlaying {
-            startPlayback(using: player)
-            return
-        }
-
-        guard isDoubleSpeedPlayback else { return }
-
-        if isPreviewingTrim {
-            resumeTrimPreview()
-            return
-        }
-
-        if playbackTime >= playbackDuration - 0.05 {
-            seek(to: 0)
-        }
-        startPlayback(using: player)
     }
 
     private func startPlayback(using player: AVPlayer) {
@@ -1706,17 +1759,31 @@ struct CropVideoView: View {
     }
 
     private func reencodedOutputArguments(output: String, cropParameters: CropParameters?) -> [String] {
-        var args: [String] = ["-map", "0:v:0", "-map", "0:a?"]
+        let hasAudio = FFmpegRunner.hasAudioStream(input)
+        var args: [String] = ["-map", "0:v:0"]
+        if hasAudio {
+            args += ["-map", "0:a:0"]
+        }
+
+        var videoFilters: [String] = []
         if let cropParameters {
-            args += ["-vf", "crop=\(cropParameters.width):\(cropParameters.height):\(cropParameters.x):\(cropParameters.y)"]
+            videoFilters.append("crop=\(cropParameters.width):\(cropParameters.height):\(cropParameters.x):\(cropParameters.y)")
+        }
+        if exportPlaybackRate != .normal {
+            let ptsMultiplier = 1.0 / exportPlaybackRate.rawValue
+            videoFilters.append(String(format: "setpts=%.8f*PTS", ptsMultiplier))
+        }
+        if !videoFilters.isEmpty {
+            args += ["-vf", videoFilters.joined(separator: ",")]
         }
         args += exportQuality.videoArguments
-        args += [
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-movflags", "+faststart",
-            "-y", output
-        ]
+        if hasAudio {
+            if exportPlaybackRate != .normal {
+                args += ["-af", audioTempoFilter(for: exportPlaybackRate.rawValue)]
+            }
+            args += ["-c:a", "aac", "-b:a", "192k"]
+        }
+        args += ["-movflags", "+faststart", "-y", output]
         return args
     }
 
@@ -1739,6 +1806,29 @@ struct CropVideoView: View {
             && abs(params.y) <= 1
             && abs(params.width - pixelWidth) <= 2
             && abs(params.height - pixelHeight) <= 2
+    }
+
+    private func audioTempoFilter(for rate: Double) -> String {
+        guard rate.isFinite, rate > 0 else { return "atempo=1.0" }
+
+        var remaining = rate
+        var components: [String] = []
+
+        while remaining > 2.0 {
+            components.append("atempo=2.0")
+            remaining /= 2.0
+        }
+
+        while remaining < 0.5 {
+            components.append("atempo=0.5")
+            remaining /= 0.5
+        }
+
+        if abs(remaining - 1.0) > 0.0001 || components.isEmpty {
+            components.append(String(format: "atempo=%.8f", remaining))
+        }
+
+        return components.joined(separator: ",")
     }
 
     private func detectBlackBars() {

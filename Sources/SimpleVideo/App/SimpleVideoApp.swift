@@ -9,7 +9,10 @@ struct SimpleVideoApp: App {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
-        ) { _ in FFmpegRunner.terminateAll() }
+        ) { _ in
+            FFmpegRunner.terminateAll()
+            CropPreviewArtifacts.cleanupAll()
+        }
     }
 
     var body: some Scene {
