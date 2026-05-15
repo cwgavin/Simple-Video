@@ -14,6 +14,10 @@ private enum CropHandle {
     case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
 }
 
+private enum TrimHandleSelection {
+    case start, end
+}
+
 private struct CropAspectRatioOption: Identifiable, Hashable {
     let id: String
     let ratio: CGFloat?
@@ -82,12 +86,15 @@ private struct TrimTimelineView: View {
     let startHandleLabel: String
     let endHandleLabel: String
     let formatTime: (Double) -> String
+    let selectedHandle: TrimHandleSelection
     @Binding var start: Double
     @Binding var end: Double
     @Binding var playhead: Double
     let onSeek: (Double) -> Void
     let onSetStart: (Double) -> Void
     let onSetEnd: (Double) -> Void
+    let onSelectStart: () -> Void
+    let onSelectEnd: () -> Void
 
     var body: some View {
         GeometryReader { geo in
@@ -114,12 +121,18 @@ private struct TrimTimelineView: View {
                 excludedRegion(width: max(width - endX, 0))
                     .offset(x: endX, y: 20)
 
-                timeHandle(label: startHandleLabel)
+                timeHandle(label: startHandleLabel, isSelected: selectedHandle == .start)
                     .position(x: startX, y: 27)
+                    .onTapGesture {
+                        onSelectStart()
+                    }
                     .gesture(startDragGesture(width: width))
 
-                timeHandle(label: endHandleLabel)
+                timeHandle(label: endHandleLabel, isSelected: selectedHandle == .end)
                     .position(x: endX, y: 27)
+                    .onTapGesture {
+                        onSelectEnd()
+                    }
                     .gesture(endDragGesture(width: width))
 
                 Rectangle()
@@ -153,21 +166,26 @@ private struct TrimTimelineView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private func timeHandle(label: String) -> some View {
+    private func timeHandle(label: String, isSelected: Bool) -> some View {
         RoundedRectangle(cornerRadius: 5)
-            .fill(Color.accentColor)
+            .fill(isSelected ? Color.accentColor : Color.accentColor.opacity(0.75))
             .frame(width: 18, height: 32)
             .overlay {
                 Text(label)
                     .font(.caption2.bold())
                     .foregroundColor(.white)
             }
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white, lineWidth: 1))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(isSelected ? Color.white : Color.white.opacity(0.7), lineWidth: isSelected ? 2 : 1)
+            )
+            .shadow(color: isSelected ? Color.accentColor.opacity(0.35) : .clear, radius: 3)
     }
 
     private func startDragGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                onSelectStart()
                 let next = min(max(time(for: value.location.x, width: width), 0), max(end - minimumDuration, 0))
                 onSetStart(next)
             }
@@ -176,6 +194,7 @@ private struct TrimTimelineView: View {
     private func endDragGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                onSelectEnd()
                 let next = min(max(time(for: value.location.x, width: width), start + minimumDuration), duration)
                 onSetEnd(next)
             }
@@ -553,10 +572,14 @@ struct CropVideoView: View {
     @State private var playbackDuration: Double = 0
     @State private var isPlaying = false
     @State private var isPreviewingTrim = false
+    @State private var isTrimPreviewPaused = false
+    @State private var isDoubleSpeedPlayback = false
     @State private var showingLargeEditor = false
     @State private var playbackTimeObserver: Any?
     @State private var trimStart: Double = 0
     @State private var trimEnd: Double = 0
+    @State private var selectedTrimHandle: TrimHandleSelection = .start
+    @State private var trimFrameDuration: Double?
 
     private let aspectRatioOptions = [
         CropAspectRatioOption(id: "free", ratio: nil),
@@ -654,6 +677,14 @@ struct CropVideoView: View {
 
                     playbackControls
 
+                    Text(L.text(
+                        language,
+                        "Use playback controls or the progress slider to choose a frame. Drag the rectangle to move the crop area, or drag corners and edges to resize it. Auto detect estimates black bars and keeps the crop editable.",
+                        "可以用播放按钮或进度条选择画面。拖动矩形可以移动裁剪区域，拖动四角和四条边可以调整大小。自动检测会估算黑边，并保留可编辑的裁剪框。"
+                    ))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
                     if !previewError.isEmpty {
                         Text(previewError)
                             .font(.caption)
@@ -677,17 +708,20 @@ struct CropVideoView: View {
                             Label(L.text(language, "Auto detect black bars", "自动检测黑边"), systemImage: "wand.and.stars")
                         }
                         .disabled(input.isEmpty || previewImage == nil || isLoadingPreview || isDetectingBlackBars || runner.isRunning)
+                        .pointingHandCursor(enabled: !input.isEmpty && previewImage != nil && !isLoadingPreview && !isDetectingBlackBars && !runner.isRunning)
                         Button {
                             showingLargeEditor = true
                         } label: {
                             Label(L.text(language, "Full-screen crop", "全屏裁剪"), systemImage: "arrow.up.left.and.arrow.down.right")
                         }
                         .disabled(previewImage == nil)
+                        .pointingHandCursor(enabled: previewImage != nil)
                         Button(L.text(language, "Reset crop", "重置裁剪")) {
                             selectedAspectRatio = "free"
                             cropRect = defaultCropRect()
                         }
                         .disabled(previewImage == nil || isDetectingBlackBars)
+                        .pointingHandCursor(enabled: previewImage != nil && !isDetectingBlackBars)
                     }
                     if isDetectingBlackBars {
                         ProgressView(L.text(language, "Detecting black bars…", "正在检测黑边…"))
@@ -702,17 +736,6 @@ struct CropVideoView: View {
                 trimControls
             }
 
-            HStack(alignment: .top) {
-                Spacer().frame(width: formLabelWidth)
-                Text(L.text(
-                    language,
-                    "Use playback controls or the progress slider to choose a frame. Drag the rectangle to move it, or drag corners and edges to resize it. Adjust the time range to export only part of the video. Auto detect estimates black bars and then leaves the crop editable. The original video is kept unchanged.",
-                    "可以用播放按钮或进度条选择画面。拖动矩形可以移动裁剪区域，拖动四角和四条边可以调整大小。调整时间范围可以只导出视频的一部分。自动检测会估算黑边并保留可编辑的裁剪框。原视频会保持不变。"
-                ))
-                .font(.caption)
-                .foregroundColor(.secondary)
-            }
-
             OutputHintRow(path: completedOutput)
             RunButton(canRun: !input.isEmpty && previewImage != nil && cropParameters != nil && !isLoadingPreview) {
                 runCrop()
@@ -721,6 +744,7 @@ struct CropVideoView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding()
+        .padding(.trailing, 8)
         .sheet(isPresented: $showingLargeEditor) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -731,6 +755,7 @@ struct CropVideoView: View {
                         showingLargeEditor = false
                     }
                     .keyboardShortcut(.defaultAction)
+                    .pointingHandCursor()
                 }
                 CropEditorView(
                     image: previewImage,
@@ -744,6 +769,7 @@ struct CropVideoView: View {
                 trimControls
             }
             .padding()
+            .padding(.trailing, 8)
             .frame(minWidth: 1080, minHeight: 740)
         }
         .onAppear {
@@ -826,12 +852,15 @@ struct CropVideoView: View {
                         startHandleLabel: "S",
                         endHandleLabel: "E",
                         formatTime: formatPlaybackTime,
+                        selectedHandle: selectedTrimHandle,
                         start: $trimStart,
                         end: $trimEnd,
                         playhead: $playbackTime,
-                        onSeek: { seek(to: $0) },
+                        onSeek: scrubPlayback(to:),
                         onSetStart: setTrimStart(_:),
-                        onSetEnd: setTrimEnd(_:)
+                        onSetEnd: setTrimEnd(_:),
+                        onSelectStart: { selectedTrimHandle = .start },
+                        onSelectEnd: { selectedTrimHandle = .end }
                     )
 
                     HStack {
@@ -839,28 +868,82 @@ struct CropVideoView: View {
                             setTrimStart(playbackTime)
                         }
                         .keyboardShortcut("[", modifiers: .command)
+                        .pointingHandCursor()
                         Button(L.text(language, "Set end to playhead", "设为当前结束")) {
                             setTrimEnd(playbackTime)
                         }
                         .keyboardShortcut("]", modifiers: .command)
+                        .pointingHandCursor()
                         Button(L.text(language, "Reset range", "重置范围")) {
                             resetTrimRange()
                         }
+                        .pointingHandCursor()
                         Button {
                             toggleTrimPreview()
                         } label: {
                             Label(
-                                isPreviewingTrim
-                                ? L.text(language, "Stop preview", "停止预览")
-                                : L.text(language, "Preview range", "预览片段"),
-                                systemImage: isPreviewingTrim ? "stop.fill" : "play.rectangle"
+                                trimPreviewButtonTitle,
+                                systemImage: trimPreviewButtonSymbol
                             )
                         }
+                        .pointingHandCursor()
+                        Button {
+                            stopTrimPreview()
+                        } label: {
+                            Label(L.text(language, "Stop preview", "停止预览"), systemImage: "stop.fill")
+                        }
+                        .disabled(!canStopTrimPreview)
+                        .pointingHandCursor(enabled: canStopTrimPreview)
                         Spacer()
                         Text(trimRangeSummary)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .monospacedDigit()
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(L.text(
+                            language,
+                            "Fine-tune S or E one frame at a time here after choosing which handle to adjust.",
+                            "在这里先选择要调整的 S 或 E，再按帧微调，这样更容易精确对齐。"
+                        ))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                        HStack {
+                        Picker(
+                            L.text(language, "Adjust handle", "调整端点"),
+                            selection: $selectedTrimHandle
+                        ) {
+                            Text("S").tag(TrimHandleSelection.start)
+                            Text("E").tag(TrimHandleSelection.end)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 90)
+
+                        Button {
+                            nudgeSelectedTrimHandle(byFrames: -1)
+                        } label: {
+                            Label(L.text(language, "Previous frame", "前一帧"), systemImage: "chevron.left")
+                        }
+                        .disabled(trimFrameDuration == nil)
+                        .pointingHandCursor(enabled: trimFrameDuration != nil)
+
+                        Button {
+                            nudgeSelectedTrimHandle(byFrames: 1)
+                        } label: {
+                            Label(L.text(language, "Next frame", "后一帧"), systemImage: "chevron.right")
+                        }
+                        .disabled(trimFrameDuration == nil)
+                        .pointingHandCursor(enabled: trimFrameDuration != nil)
+
+                        Spacer()
+                        Text(frameStepSummary)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                        }
                     }
                 }
             }
@@ -877,6 +960,43 @@ struct CropVideoView: View {
         )
     }
 
+    private var frameStepSummary: String {
+        guard let trimFrameDuration, trimFrameDuration.isFinite, trimFrameDuration > 0 else {
+            return L.text(language, "Frame step unavailable", "暂时无法读取单帧步进")
+        }
+
+        let fps = 1.0 / trimFrameDuration
+        return L.text(
+            language,
+            String(format: "1 frame = %.4fs (%.2f fps)", trimFrameDuration, fps),
+            String(format: "1 帧 = %.4f 秒（%.2f fps）", trimFrameDuration, fps)
+        )
+    }
+
+    private var trimPreviewButtonTitle: String {
+        if isPreviewingTrim {
+            return isTrimPreviewPaused
+            ? L.text(language, "Resume preview", "继续预览")
+            : L.text(language, "Pause preview", "暂停预览")
+        }
+        return L.text(language, "Preview range", "预览片段")
+    }
+
+    private var trimPreviewButtonSymbol: String {
+        if isPreviewingTrim {
+            return isTrimPreviewPaused ? "play.rectangle" : "pause.rectangle"
+        }
+        return "play.rectangle"
+    }
+
+    private var canStopTrimPreview: Bool {
+        isPreviewingTrim
+    }
+
+    private var playbackRate: Float {
+        isDoubleSpeedPlayback ? 2.0 : 1.0
+    }
+
     @ViewBuilder
     private var playbackControls: some View {
         if player != nil {
@@ -888,6 +1008,15 @@ struct CropVideoView: View {
                         .frame(width: 18)
                 }
                 .disabled(playbackDuration <= 0)
+                .pointingHandCursor(enabled: playbackDuration > 0)
+
+                Button("2x") {
+                    togglePlaybackSpeed()
+                }
+                .buttonStyle(.bordered)
+                .tint(isDoubleSpeedPlayback ? .accentColor : .secondary)
+                .disabled(playbackDuration <= 0)
+                .pointingHandCursor(enabled: playbackDuration > 0)
 
                 Text(L.text(language, "Preview playhead:", "预览播放头："))
                     .font(.caption)
@@ -896,7 +1025,7 @@ struct CropVideoView: View {
                 Slider(
                     value: Binding(
                         get: { playbackTime },
-                        set: { seek(to: $0) }
+                        set: scrubPlayback(to:)
                     ),
                     in: 0...max(playbackDuration, 0.01)
                 )
@@ -924,6 +1053,7 @@ struct CropVideoView: View {
         let newPlayer = AVPlayer(playerItem: item)
         newPlayer.actionAtItemEnd = .pause
         player = newPlayer
+        trimFrameDuration = nil
 
         playbackTimeObserver = newPlayer.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
@@ -938,6 +1068,7 @@ struct CropVideoView: View {
                     seek(to: trimPreviewEnd, cancelTrimPreview: false)
                     isPlaying = false
                     isPreviewingTrim = false
+                    isTrimPreviewPaused = false
                     return
                 }
             }
@@ -947,10 +1078,12 @@ struct CropVideoView: View {
         Task {
             do {
                 let duration = try await asset.load(.duration)
+                let frameDuration = try await loadFrameDuration(from: asset)
                 let durationSeconds = CMTimeGetSeconds(duration)
                 await MainActor.run {
                     guard player === newPlayer else { return }
                     playbackDuration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : 0
+                    trimFrameDuration = frameDuration
                     if playbackDuration > 0 {
                         if resetTrimRange || trimEnd <= 0 {
                             trimStart = 0
@@ -979,6 +1112,7 @@ struct CropVideoView: View {
         playbackTimeObserver = nil
         isPlaying = false
         isPreviewingTrim = false
+        isTrimPreviewPaused = false
 
         if resetState {
             playbackTime = 0
@@ -996,15 +1130,52 @@ struct CropVideoView: View {
         if isPlaying {
             player.pause()
             isPlaying = false
-            isPreviewingTrim = false
+            if isPreviewingTrim {
+                isTrimPreviewPaused = true
+            } else {
+                isPreviewingTrim = false
+            }
         } else {
+            if isPreviewingTrim {
+                resumeTrimPreview()
+                return
+            }
             if playbackDuration > 0, playbackTime >= playbackDuration - 0.05 {
                 seek(to: 0)
             }
             isPreviewingTrim = false
-            player.play()
-            isPlaying = true
+            isTrimPreviewPaused = false
+            startPlayback(using: player)
         }
+    }
+
+    private func togglePlaybackSpeed() {
+        guard let player, playbackDuration > 0 else { return }
+
+        isDoubleSpeedPlayback.toggle()
+        updatePlaybackTime()
+
+        if isPlaying {
+            startPlayback(using: player)
+            return
+        }
+
+        guard isDoubleSpeedPlayback else { return }
+
+        if isPreviewingTrim {
+            resumeTrimPreview()
+            return
+        }
+
+        if playbackTime >= playbackDuration - 0.05 {
+            seek(to: 0)
+        }
+        startPlayback(using: player)
+    }
+
+    private func startPlayback(using player: AVPlayer) {
+        player.playImmediately(atRate: playbackRate)
+        isPlaying = true
     }
 
     private func seek(to seconds: Double, cancelTrimPreview: Bool = true) {
@@ -1012,6 +1183,7 @@ struct CropVideoView: View {
         playbackTime = bounded
         if cancelTrimPreview {
             isPreviewingTrim = false
+            isTrimPreviewPaused = false
         }
         guard let player else { return }
 
@@ -1033,6 +1205,21 @@ struct CropVideoView: View {
         }
     }
 
+    private func scrubPlayback(to seconds: Double) {
+        seek(to: seconds, cancelTrimPreview: !shouldPreserveTrimPreview(whenSeekingTo: seconds))
+    }
+
+    private func shouldPreserveTrimPreview(whenSeekingTo seconds: Double) -> Bool {
+        guard isPreviewingTrim else { return false }
+
+        let start = min(max(trimStart, 0), playbackDuration)
+        let end = trimPreviewEnd
+        guard end > start else { return false }
+
+        let bounded = min(max(seconds, 0), max(playbackDuration, 0))
+        return bounded >= start && bounded <= end
+    }
+
     private var trimPreviewEnd: Double {
         guard playbackDuration > 0, trimEnd > 0 else { return playbackDuration }
         return min(max(trimEnd, trimStart), playbackDuration)
@@ -1040,7 +1227,11 @@ struct CropVideoView: View {
 
     private func toggleTrimPreview() {
         if isPreviewingTrim {
-            stopTrimPreview()
+            if isTrimPreviewPaused {
+                resumeTrimPreview()
+            } else {
+                pauseTrimPreview()
+            }
         } else {
             startTrimPreview()
         }
@@ -1055,6 +1246,7 @@ struct CropVideoView: View {
         player.pause()
         isPlaying = false
         isPreviewingTrim = false
+        isTrimPreviewPaused = false
         player.seek(
             to: CMTime(seconds: start, preferredTimescale: 600),
             toleranceBefore: .zero,
@@ -1064,16 +1256,38 @@ struct CropVideoView: View {
                 guard finished, self.player === player else { return }
                 self.playbackTime = start
                 self.isPreviewingTrim = true
-                player.play()
-                self.isPlaying = true
+                self.isTrimPreviewPaused = false
+                self.startPlayback(using: player)
             }
         }
+    }
+
+    private func pauseTrimPreview() {
+        guard isPreviewingTrim else { return }
+        player?.pause()
+        isPlaying = false
+        isTrimPreviewPaused = true
+    }
+
+    private func resumeTrimPreview() {
+        guard let player, isPreviewingTrim else { return }
+
+        let start = min(max(trimStart, 0), playbackDuration)
+        let end = trimPreviewEnd
+        guard end > start else { return }
+
+        if playbackTime < start || playbackTime >= end - 0.03 {
+            seek(to: start, cancelTrimPreview: false)
+        }
+        isTrimPreviewPaused = false
+        startPlayback(using: player)
     }
 
     private func stopTrimPreview() {
         player?.pause()
         isPlaying = false
         isPreviewingTrim = false
+        isTrimPreviewPaused = false
     }
 
     private func setTrimStart(_ seconds: Double) {
@@ -1096,6 +1310,17 @@ struct CropVideoView: View {
         seek(to: 0)
     }
 
+    private func nudgeSelectedTrimHandle(byFrames frames: Int) {
+        guard let trimFrameDuration, trimFrameDuration.isFinite, trimFrameDuration > 0 else { return }
+        let offset = Double(frames) * trimFrameDuration
+        switch selectedTrimHandle {
+        case .start:
+            setTrimStart(trimStart + offset)
+        case .end:
+            setTrimEnd(trimEnd + offset)
+        }
+    }
+
     private func clampTrimRange(to duration: Double) {
         let minimumDuration = minimumTrimDuration(for: duration)
         trimStart = min(max(trimStart, 0), max(duration - minimumDuration, 0))
@@ -1104,6 +1329,21 @@ struct CropVideoView: View {
 
     private func minimumTrimDuration(for duration: Double) -> Double {
         0.1
+    }
+
+    private func loadFrameDuration(from asset: AVURLAsset) async throws -> Double? {
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        guard let track = tracks.first else { return nil }
+
+        let nominalFrameRate = try await track.load(.nominalFrameRate)
+        if nominalFrameRate.isFinite, nominalFrameRate > 0 {
+            return 1.0 / Double(nominalFrameRate)
+        }
+
+        let minimumFrameDuration = try await track.load(.minFrameDuration)
+        let seconds = CMTimeGetSeconds(minimumFrameDuration)
+        guard seconds.isFinite, seconds > 0 else { return nil }
+        return seconds
     }
 
     private func updatePlaybackTime() {

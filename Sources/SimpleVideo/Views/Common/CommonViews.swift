@@ -123,6 +123,48 @@ func ffmpegTime(_ seconds: Double) -> String {
 
 let formLabelWidth: CGFloat = 100
 
+private struct PointingHandCursorModifier: ViewModifier {
+    let isEnabled: Bool
+    @State private var isHovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                if hovering {
+                    isHovering = true
+                    if isEnabled {
+                        NSCursor.pointingHand.push()
+                    }
+                } else {
+                    if isHovering && isEnabled {
+                        NSCursor.pop()
+                    }
+                    isHovering = false
+                }
+            }
+            .onChange(of: isEnabled) { _, enabled in
+                guard isHovering else { return }
+                if enabled {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .onDisappear {
+                if isHovering && isEnabled {
+                    NSCursor.pop()
+                }
+                isHovering = false
+            }
+    }
+}
+
+extension View {
+    func pointingHandCursor(enabled: Bool = true) -> some View {
+        modifier(PointingHandCursorModifier(isEnabled: enabled))
+    }
+}
+
 struct FilePickerRow: View {
     let label: String
     @Binding var path: String
@@ -192,6 +234,7 @@ struct FilePickerRow: View {
                 return true
             }
             Button(L.text(language, "Browse…", "浏览…")) { browse() }
+                .pointingHandCursor()
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -230,6 +273,7 @@ struct OutputHintRow: View {
                 }
                 .help(L.text(language, "Reveal in Finder", "在 Finder 中显示"))
                 .buttonStyle(.borderless)
+                .pointingHandCursor()
                 Spacer(minLength: 0)
             }
         }
@@ -257,6 +301,7 @@ struct RunButton: View {
             .keyboardShortcut(.return, modifiers: [.command])
             .disabled(!canRun || runner.isRunning)
             .buttonStyle(.borderedProminent)
+            .pointingHandCursor(enabled: canRun && !runner.isRunning)
         }.padding(.top, 6)
     }
 }
