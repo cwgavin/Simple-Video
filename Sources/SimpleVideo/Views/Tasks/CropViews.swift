@@ -7,16 +7,13 @@ struct CropVideoView: View {
     let isActive: Bool
 
     @EnvironmentObject var runner: FFmpegRunner
+    @EnvironmentObject private var session: CropVideoSession
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
-    @State private var input = ""
     @State private var previewImage: NSImage?
     @State private var previewPixelSize: CGSize = .zero
-    @State private var cropRect = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
-    @State private var selectedAspectRatio = "free"
     @State private var isLoadingPreview = false
     @State private var isDetectingBlackBars = false
     @State private var previewError = ""
-    @State private var completedOutput = ""
     @State private var player: AVPlayer?
     @State private var playbackTime: Double = 0
     @State private var playbackDuration: Double = 0
@@ -25,12 +22,7 @@ struct CropVideoView: View {
     @State private var isTrimPreviewPaused = false
     @State private var showingLargeEditor = false
     @State private var playbackTimeObserver: Any?
-    @State private var trimStart: Double = 0
-    @State private var trimEnd: Double = 0
-    @State private var selectedTrimHandle: TrimHandleSelection = .start
     @State private var trimFrameDuration: Double?
-    @State private var exportQuality = CropExportQualityOption.balanced
-    @State private var exportPlaybackRate = CropPlaybackRateOption.normal
     @State private var previewPlaybackMode: CropPreviewPlaybackMode = .original
     @State private var previewProxyPath: String?
     @State private var isGeneratingPreviewProxy = false
@@ -51,13 +43,13 @@ struct CropVideoView: View {
     }
 
     private var selectedAspectRatioOption: CropAspectRatioOption {
-        aspectRatioOptions.first(where: { $0.id == selectedAspectRatio }) ?? aspectRatioOptions[0]
+        aspectRatioOptions.first(where: { $0.id == session.selectedAspectRatio }) ?? aspectRatioOptions[0]
     }
 
     private var selectedTrimRange: (start: Double, end: Double)? {
         guard playbackDuration > minimumTrimDuration(for: playbackDuration) else { return nil }
-        let start = min(max(trimStart, 0), playbackDuration)
-        let end = min(max(trimEnd, start), playbackDuration)
+        let start = min(max(session.trimStart, 0), playbackDuration)
+        let end = min(max(session.trimEnd, start), playbackDuration)
         guard end > start else { return nil }
         if start <= 0.001, end >= playbackDuration - 0.001 {
             return nil
@@ -70,10 +62,10 @@ struct CropVideoView: View {
         let pixelWidth = Int(previewPixelSize.width.rounded(.down))
         let pixelHeight = Int(previewPixelSize.height.rounded(.down))
 
-        var x = evenInt(cropRect.minX * CGFloat(pixelWidth))
-        var y = evenInt(cropRect.minY * CGFloat(pixelHeight))
-        var width = max(2, evenInt(cropRect.width * CGFloat(pixelWidth)))
-        var height = max(2, evenInt(cropRect.height * CGFloat(pixelHeight)))
+        var x = evenInt(session.cropRect.minX * CGFloat(pixelWidth))
+        var y = evenInt(session.cropRect.minY * CGFloat(pixelHeight))
+        var width = max(2, evenInt(session.cropRect.width * CGFloat(pixelWidth)))
+        var height = max(2, evenInt(session.cropRect.height * CGFloat(pixelHeight)))
 
         if x + width > pixelWidth { width = max(2, evenInt(CGFloat(pixelWidth - x))) }
         if y + height > pixelHeight { height = max(2, evenInt(CGFloat(pixelHeight - y))) }
@@ -93,17 +85,73 @@ struct CropVideoView: View {
     }
 
     private var requiresVideoReencode: Bool {
-        hasVisualCrop || selectedTrimRange != nil || exportPlaybackRate != .normal
+        hasVisualCrop || selectedTrimRange != nil || session.exportPlaybackRate != .normal
+    }
+
+    private var inputBinding: Binding<String> {
+        Binding(
+            get: { session.input },
+            set: { session.input = $0 }
+        )
+    }
+
+    private var cropRectBinding: Binding<CGRect> {
+        Binding(
+            get: { session.cropRect },
+            set: { session.cropRect = $0 }
+        )
+    }
+
+    private var selectedAspectRatioBinding: Binding<String> {
+        Binding(
+            get: { session.selectedAspectRatio },
+            set: { session.selectedAspectRatio = $0 }
+        )
+    }
+
+    private var trimStartBinding: Binding<Double> {
+        Binding(
+            get: { session.trimStart },
+            set: { session.trimStart = $0 }
+        )
+    }
+
+    private var trimEndBinding: Binding<Double> {
+        Binding(
+            get: { session.trimEnd },
+            set: { session.trimEnd = $0 }
+        )
+    }
+
+    private var selectedTrimHandleBinding: Binding<TrimHandleSelection> {
+        Binding(
+            get: { session.selectedTrimHandle },
+            set: { session.selectedTrimHandle = $0 }
+        )
+    }
+
+    private var exportQualityBinding: Binding<CropExportQualityOption> {
+        Binding(
+            get: { session.exportQuality },
+            set: { session.exportQuality = $0 }
+        )
+    }
+
+    private var exportPlaybackRateBinding: Binding<CropPlaybackRateOption> {
+        Binding(
+            get: { session.exportPlaybackRate },
+            set: { session.exportPlaybackRate = $0 }
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            FilePickerRow(label: L.text(language, "Input video:", "输入视频："), path: $input, contentTypes: [.movie, .video, .audiovisualContent])
+            FilePickerRow(label: L.text(language, "Input video:", "输入视频："), path: inputBinding, contentTypes: [.movie, .video, .audiovisualContent])
 
             HStack {
                 Text(L.text(language, "Aspect ratio:", "裁剪比例："))
                     .frame(width: formLabelWidth, alignment: .trailing)
-                Picker("aspect-ratio", selection: $selectedAspectRatio) {
+                Picker("aspect-ratio", selection: selectedAspectRatioBinding) {
                     ForEach(aspectRatioOptions) { option in
                         Text(option.title(language: language)).tag(option.id)
                     }
@@ -125,7 +173,7 @@ struct CropVideoView: View {
                                 player: player,
                                 imagePixelSize: previewPixelSize,
                                 fixedAspectRatio: selectedAspectRatioOption.ratio,
-                                cropRect: $cropRect
+                                cropRect: cropRectBinding
                             )
                         } else {
                             RoundedRectangle(cornerRadius: 8)
@@ -134,7 +182,7 @@ struct CropVideoView: View {
                                     if isLoadingPreview {
                                         ProgressView(L.text(language, "Loading preview…", "正在加载预览…"))
                                     } else {
-                                        Text(input.isEmpty
+                                        Text(session.input.isEmpty
                                              ? L.text(language, "Choose a video to preview the crop area.", "请选择视频以预览裁剪区域。")
                                              : L.text(language, "Preview unavailable.", "无法显示预览。"))
                                         .foregroundColor(.secondary)
@@ -191,8 +239,8 @@ struct CropVideoView: View {
                         } label: {
                             Label(L.text(language, "Auto detect black bars", "自动检测黑边"), systemImage: "wand.and.stars")
                         }
-                        .disabled(input.isEmpty || previewImage == nil || isLoadingPreview || isDetectingBlackBars || runner.isRunning)
-                        .pointingHandCursor(enabled: !input.isEmpty && previewImage != nil && !isLoadingPreview && !isDetectingBlackBars && !runner.isRunning)
+                        .disabled(session.input.isEmpty || previewImage == nil || isLoadingPreview || isDetectingBlackBars || runner.isRunning)
+                        .pointingHandCursor(enabled: !session.input.isEmpty && previewImage != nil && !isLoadingPreview && !isDetectingBlackBars && !runner.isRunning)
                         Button {
                             showingLargeEditor = true
                         } label: {
@@ -201,8 +249,7 @@ struct CropVideoView: View {
                         .disabled(previewImage == nil)
                         .pointingHandCursor(enabled: previewImage != nil)
                         Button(L.text(language, "Reset crop", "重置裁剪")) {
-                            selectedAspectRatio = "free"
-                            cropRect = defaultCropRect()
+                            session.resetCropSelection()
                         }
                         .disabled(previewImage == nil || isDetectingBlackBars)
                         .pointingHandCursor(enabled: previewImage != nil && !isDetectingBlackBars)
@@ -226,8 +273,8 @@ struct CropVideoView: View {
                 exportControls
             }
 
-            OutputHintRow(path: completedOutput)
-            RunButton(canRun: !input.isEmpty && previewImage != nil && cropParameters != nil && !isLoadingPreview) {
+            OutputHintRow(path: session.completedOutput)
+            RunButton(canRun: !session.input.isEmpty && previewImage != nil && cropParameters != nil && !isLoadingPreview) {
                 runCrop()
             }
             Spacer()
@@ -252,7 +299,7 @@ struct CropVideoView: View {
                     player: player,
                     imagePixelSize: previewPixelSize,
                     fixedAspectRatio: selectedAspectRatioOption.ratio,
-                    cropRect: $cropRect
+                    cropRect: cropRectBinding
                 )
                 .frame(minWidth: 1000, minHeight: 620)
                 playbackControls
@@ -263,32 +310,34 @@ struct CropVideoView: View {
             .frame(minWidth: 1080, minHeight: 740)
         }
         .onAppear {
-            if isActive, !input.isEmpty, player == nil {
-                startPreviewSession(for: input, resetTrimRange: trimEnd <= 0)
+            if isActive, !session.input.isEmpty, player == nil {
+                startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0)
+            }
+            if isActive, !session.input.isEmpty, previewImage == nil, !isLoadingPreview {
+                loadPreview(for: session.input)
             }
         }
         .onDisappear {
             cleanupPreviewSession()
         }
         .onChange(of: isActive) { _, active in
-            if active {
-                if !input.isEmpty, player == nil {
-                    startPreviewSession(for: input, resetTrimRange: trimEnd <= 0)
+                if active {
+                if !session.input.isEmpty, player == nil {
+                    startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0)
                 }
-                if !input.isEmpty, previewImage == nil, !isLoadingPreview {
-                    loadPreview(for: input)
+                if !session.input.isEmpty, previewImage == nil, !isLoadingPreview {
+                    loadPreview(for: session.input)
                 }
             } else {
                 showingLargeEditor = false
                 cleanupPreviewSession()
             }
         }
-        .onChange(of: input) { _, newValue in
-            completedOutput = ""
+        .onChange(of: session.input) { _, newValue in
+            session.completedOutput = ""
             previewImage = nil
             previewPixelSize = .zero
-            selectedAspectRatio = "free"
-            cropRect = defaultCropRect()
+            session.resetCropSelection()
             previewError = ""
             isDetectingBlackBars = false
             showingLargeEditor = false
@@ -301,8 +350,8 @@ struct CropVideoView: View {
                 loadPreview(for: newValue)
             }
         }
-        .onChange(of: selectedAspectRatio) { _, _ in
-            cropRect = adjustedCropRect(cropRect, for: selectedAspectRatioOption.ratio)
+        .onChange(of: session.selectedAspectRatio) { _, _ in
+            session.cropRect = adjustedCropRect(session.cropRect, for: selectedAspectRatioOption.ratio)
         }
     }
 
@@ -317,7 +366,7 @@ struct CropVideoView: View {
                 Text(L.text(language, "Loading video duration…", "正在读取视频时长…"))
                     .font(.caption)
                     .foregroundColor(.secondary)
-            } else if trimEnd <= 0 {
+            } else if session.trimEnd <= 0 {
                 Text(L.text(language, "Loading video duration…", "正在读取视频时长…"))
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -342,15 +391,15 @@ struct CropVideoView: View {
                         startHandleLabel: "S",
                         endHandleLabel: "E",
                         formatTime: formatPlaybackTime,
-                        selectedHandle: selectedTrimHandle,
-                        start: $trimStart,
-                        end: $trimEnd,
+                        selectedHandle: session.selectedTrimHandle,
+                        start: trimStartBinding,
+                        end: trimEndBinding,
                         playhead: $playbackTime,
                         onSeek: scrubPlayback(to:),
                         onSetStart: setTrimStart(_:),
                         onSetEnd: setTrimEnd(_:),
-                        onSelectStart: { selectedTrimHandle = .start },
-                        onSelectEnd: { selectedTrimHandle = .end }
+                        onSelectStart: { session.selectedTrimHandle = .start },
+                        onSelectEnd: { session.selectedTrimHandle = .end }
                     )
 
                     HStack {
@@ -403,7 +452,7 @@ struct CropVideoView: View {
                         HStack {
                         Picker(
                             L.text(language, "Adjust handle", "调整端点"),
-                            selection: $selectedTrimHandle
+                            selection: selectedTrimHandleBinding
                         ) {
                             Text("S").tag(TrimHandleSelection.start)
                             Text("E").tag(TrimHandleSelection.end)
@@ -444,11 +493,11 @@ struct CropVideoView: View {
     }
 
     private var trimRangeSummary: String {
-        let duration = max(trimEnd - trimStart, 0)
+        let duration = max(session.trimEnd - session.trimStart, 0)
         return L.text(
             language,
-            "Export: \(formatPlaybackTime(trimStart)) – \(formatPlaybackTime(trimEnd)) (\(formatPlaybackTime(duration)))",
-            "导出：\(formatPlaybackTime(trimStart)) – \(formatPlaybackTime(trimEnd))（\(formatPlaybackTime(duration))）"
+            "Export: \(formatPlaybackTime(session.trimStart)) – \(formatPlaybackTime(session.trimEnd)) (\(formatPlaybackTime(duration)))",
+            "导出：\(formatPlaybackTime(session.trimStart)) – \(formatPlaybackTime(session.trimEnd))（\(formatPlaybackTime(duration))）"
         )
     }
 
@@ -486,7 +535,7 @@ struct CropVideoView: View {
     }
 
     private var playbackRate: Float {
-        Float(exportPlaybackRate.rawValue)
+        Float(session.exportPlaybackRate.rawValue)
     }
 
     @ViewBuilder
@@ -495,7 +544,7 @@ struct CropVideoView: View {
             HStack {
                 Picker(
                     L.text(language, "Playback rate", "播放倍率"),
-                    selection: $exportPlaybackRate
+                    selection: exportPlaybackRateBinding
                 ) {
                     ForEach(CropPlaybackRateOption.allCases) { option in
                         Text(option.title(language: language)).tag(option)
@@ -518,7 +567,7 @@ struct CropVideoView: View {
                 HStack {
                     Picker(
                         L.text(language, "Export quality", "导出画质"),
-                        selection: $exportQuality
+                        selection: exportQualityBinding
                     ) {
                         ForEach(CropExportQualityOption.allCases) { option in
                             Text(option.title(language: language)).tag(option)
@@ -529,14 +578,14 @@ struct CropVideoView: View {
                     Spacer()
                 }
 
-                Text(exportQuality.summary(language: language))
+                Text(session.exportQuality.summary(language: language))
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else if selectedTrimRange != nil {
                 HStack {
                     Picker(
                         L.text(language, "Export quality", "导出画质"),
-                        selection: $exportQuality
+                        selection: exportQualityBinding
                     ) {
                         ForEach(CropExportQualityOption.allCases) { option in
                             Text(option.title(language: language)).tag(option)
@@ -547,14 +596,14 @@ struct CropVideoView: View {
                     Spacer()
                     }
 
-                    Text(exportQuality.summary(language: language))
+                    Text(session.exportQuality.summary(language: language))
                         .font(.caption)
                         .foregroundColor(.secondary)
-            } else if exportPlaybackRate != .normal {
+            } else if session.exportPlaybackRate != .normal {
                 HStack {
                     Picker(
                         L.text(language, "Export quality", "导出画质"),
-                        selection: $exportQuality
+                        selection: exportQualityBinding
                     ) {
                         ForEach(CropExportQualityOption.allCases) { option in
                             Text(option.title(language: language)).tag(option)
@@ -565,7 +614,7 @@ struct CropVideoView: View {
                     Spacer()
                 }
 
-                Text(exportQuality.summary(language: language))
+                Text(session.exportQuality.summary(language: language))
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else {
@@ -695,9 +744,9 @@ struct CropVideoView: View {
                     playbackDuration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : 0
                     trimFrameDuration = frameDuration
                     if playbackDuration > 0 {
-                        if resetTrimRange || trimEnd <= 0 {
-                            trimStart = 0
-                            trimEnd = playbackDuration
+                        if resetTrimRange || session.trimEnd <= 0 {
+                            session.trimStart = 0
+                            session.trimEnd = playbackDuration
                         } else {
                             clampTrimRange(to: playbackDuration)
                         }
@@ -737,21 +786,21 @@ struct CropVideoView: View {
 
             if !requiresProxy {
                 await MainActor.run {
-                    guard input == path, proxyGenerationID == requestID else { return }
+                    guard session.input == path, proxyGenerationID == requestID else { return }
                     isGeneratingPreviewProxy = false
                 }
                 return
             }
 
             await MainActor.run {
-                guard input == path, proxyGenerationID == requestID else { return }
+                guard session.input == path, proxyGenerationID == requestID else { return }
                 isGeneratingPreviewProxy = true
             }
 
             do {
                 let proxyPath = try await Self.generatePreviewProxy(path: path) { process in
                     await MainActor.run {
-                        guard input == path, proxyGenerationID == requestID else {
+                        guard session.input == path, proxyGenerationID == requestID else {
                             return false
                         }
                         proxyGenerationProcess = process
@@ -764,7 +813,7 @@ struct CropVideoView: View {
                 }
 
                 let shouldAdopt = await MainActor.run { () -> Bool in
-                    guard input == path, proxyGenerationID == requestID else { return false }
+                    guard session.input == path, proxyGenerationID == requestID else { return false }
                     previewProxyPath = proxyPath
                     CropPreviewArtifacts.register(proxyPath)
                     proxyGenerationProcess = nil
@@ -788,7 +837,7 @@ struct CropVideoView: View {
                 return
             } catch {
                 await MainActor.run {
-                    guard input == path, proxyGenerationID == requestID else { return }
+                    guard session.input == path, proxyGenerationID == requestID else { return }
                     proxyGenerationProcess = nil
                     isGeneratingPreviewProxy = false
                     runner.log += "WARNING: Could not create a compatibility preview: \(error.localizedDescription)\n"
@@ -814,8 +863,8 @@ struct CropVideoView: View {
             playbackDuration = 0
         }
         if resetTrimRange {
-            trimStart = 0
-            trimEnd = 0
+            session.trimStart = 0
+            session.trimEnd = 0
         }
     }
 
@@ -907,7 +956,7 @@ struct CropVideoView: View {
     private func shouldPreserveTrimPreview(whenSeekingTo seconds: Double) -> Bool {
         guard isPreviewingTrim else { return false }
 
-        let start = min(max(trimStart, 0), playbackDuration)
+        let start = min(max(session.trimStart, 0), playbackDuration)
         let end = trimPreviewEnd
         guard end > start else { return false }
 
@@ -916,8 +965,8 @@ struct CropVideoView: View {
     }
 
     private var trimPreviewEnd: Double {
-        guard playbackDuration > 0, trimEnd > 0 else { return playbackDuration }
-        return min(max(trimEnd, trimStart), playbackDuration)
+        guard playbackDuration > 0, session.trimEnd > 0 else { return playbackDuration }
+        return min(max(session.trimEnd, session.trimStart), playbackDuration)
     }
 
     private func toggleTrimPreview() {
@@ -934,7 +983,7 @@ struct CropVideoView: View {
 
     private func startTrimPreview() {
         guard let player, playbackDuration > 0 else { return }
-        let start = min(max(trimStart, 0), playbackDuration)
+        let start = min(max(session.trimStart, 0), playbackDuration)
         let end = trimPreviewEnd
         guard end > start else { return }
 
@@ -967,7 +1016,7 @@ struct CropVideoView: View {
     private func resumeTrimPreview() {
         guard let player, isPreviewingTrim else { return }
 
-        let start = min(max(trimStart, 0), playbackDuration)
+        let start = min(max(session.trimStart, 0), playbackDuration)
         let end = trimPreviewEnd
         guard end > start else { return }
 
@@ -987,39 +1036,39 @@ struct CropVideoView: View {
 
     private func setTrimStart(_ seconds: Double) {
         guard playbackDuration > 0 else { return }
-        let maxStart = max(0, trimEnd - minimumTrimDuration(for: playbackDuration))
-        trimStart = min(max(seconds, 0), maxStart)
-        seek(to: trimStart)
+        let maxStart = max(0, session.trimEnd - minimumTrimDuration(for: playbackDuration))
+        session.trimStart = min(max(seconds, 0), maxStart)
+        seek(to: session.trimStart)
     }
 
     private func setTrimEnd(_ seconds: Double) {
         guard playbackDuration > 0 else { return }
-        let minEnd = min(playbackDuration, trimStart + minimumTrimDuration(for: playbackDuration))
-        trimEnd = min(max(seconds, minEnd), playbackDuration)
-        seek(to: trimEnd)
+        let minEnd = min(playbackDuration, session.trimStart + minimumTrimDuration(for: playbackDuration))
+        session.trimEnd = min(max(seconds, minEnd), playbackDuration)
+        seek(to: session.trimEnd)
     }
 
     private func resetTrimRange() {
-        trimStart = 0
-        trimEnd = playbackDuration
+        session.trimStart = 0
+        session.trimEnd = playbackDuration
         seek(to: 0)
     }
 
     private func nudgeSelectedTrimHandle(byFrames frames: Int) {
         guard let trimFrameDuration, trimFrameDuration.isFinite, trimFrameDuration > 0 else { return }
         let offset = Double(frames) * trimFrameDuration
-        switch selectedTrimHandle {
+        switch session.selectedTrimHandle {
         case .start:
-            setTrimStart(trimStart + offset)
+            setTrimStart(session.trimStart + offset)
         case .end:
-            setTrimEnd(trimEnd + offset)
+            setTrimEnd(session.trimEnd + offset)
         }
     }
 
     private func clampTrimRange(to duration: Double) {
         let minimumDuration = minimumTrimDuration(for: duration)
-        trimStart = min(max(trimStart, 0), max(duration - minimumDuration, 0))
-        trimEnd = min(max(trimEnd, trimStart + minimumDuration), duration)
+        session.trimStart = min(max(session.trimStart, 0), max(duration - minimumDuration, 0))
+        session.trimEnd = min(max(session.trimEnd, session.trimStart + minimumDuration), duration)
     }
 
     private func minimumTrimDuration(for duration: Double) -> Double {
@@ -1068,34 +1117,34 @@ struct CropVideoView: View {
         guard let params = cropParameters else { return }
 
         if requiresVideoReencode {
-            let out = makeOutputPath(input: input, ext: "mp4")
+            let out = makeOutputPath(input: session.input, ext: "mp4")
             if let trimRange = selectedTrimRange {
-                var args = ["-i", input, "-ss", ffmpegTime(trimRange.start), "-t", ffmpegTime(trimRange.end - trimRange.start)]
+                var args = ["-i", session.input, "-ss", ffmpegTime(trimRange.start), "-t", ffmpegTime(trimRange.end - trimRange.start)]
                 args += reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
-                runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
+                runner.run(args: args, inputForDuration: session.input) { session.completedOutput = $0 }
             } else {
-                let args = ["-i", input] + reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
-                runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
+                let args = ["-i", session.input] + reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
+                runner.run(args: args, inputForDuration: session.input) { session.completedOutput = $0 }
             }
             return
         }
 
-        let out = makeOutputPath(input: input, ext: inputExt(input))
+        let out = makeOutputPath(input: session.input, ext: inputExt(session.input))
         let args: [String]
         if let trimRange = selectedTrimRange {
             args = [
                 "-ss", ffmpegTime(trimRange.start),
-                "-i", input,
+                "-i", session.input,
                 "-t", ffmpegTime(trimRange.end - trimRange.start)
             ] + copyOutputArguments(output: out)
         } else {
-            args = ["-i", input] + copyOutputArguments(output: out)
+            args = ["-i", session.input] + copyOutputArguments(output: out)
         }
-        runner.run(args: args, inputForDuration: input) { completedOutput = $0 }
+        runner.run(args: args, inputForDuration: session.input) { session.completedOutput = $0 }
     }
 
     private func reencodedOutputArguments(output: String, cropParameters: CropParameters?) -> [String] {
-        let hasAudio = FFmpegRunner.hasAudioStream(input)
+        let hasAudio = FFmpegRunner.hasAudioStream(session.input)
         var args: [String] = ["-map", "0:v:0"]
         if hasAudio {
             args += ["-map", "0:a:0"]
@@ -1105,17 +1154,17 @@ struct CropVideoView: View {
         if let cropParameters {
             videoFilters.append("crop=\(cropParameters.width):\(cropParameters.height):\(cropParameters.x):\(cropParameters.y)")
         }
-        if exportPlaybackRate != .normal {
-            let ptsMultiplier = 1.0 / exportPlaybackRate.rawValue
+        if session.exportPlaybackRate != .normal {
+            let ptsMultiplier = 1.0 / session.exportPlaybackRate.rawValue
             videoFilters.append(String(format: "setpts=%.8f*PTS", ptsMultiplier))
         }
         if !videoFilters.isEmpty {
             args += ["-vf", videoFilters.joined(separator: ",")]
         }
-        args += exportQuality.videoArguments
+        args += session.exportQuality.videoArguments
         if hasAudio {
-            if exportPlaybackRate != .normal {
-                args += ["-af", audioTempoFilter(for: exportPlaybackRate.rawValue)]
+            if session.exportPlaybackRate != .normal {
+                args += ["-af", audioTempoFilter(for: session.exportPlaybackRate.rawValue)]
             }
             args += ["-c:a", "aac", "-b:a", "192k"]
         }
@@ -1168,7 +1217,7 @@ struct CropVideoView: View {
     }
 
     private func detectBlackBars() {
-        let requestedPath = input
+        let requestedPath = session.input
         guard !requestedPath.isEmpty, previewPixelSize.width > 0, previewPixelSize.height > 0 else { return }
 
         isDetectingBlackBars = true
@@ -1184,9 +1233,9 @@ struct CropVideoView: View {
         Task {
             do {
                 let params = try await Self.detectCropParameters(path: requestedPath)
-                guard input == requestedPath else { return }
-                selectedAspectRatio = "free"
-                cropRect = cropRect(from: params)
+                guard session.input == requestedPath else { return }
+                session.selectedAspectRatio = "free"
+                session.cropRect = cropRect(from: params)
                 runner.progress = 1
                 runner.status = L.text(language, "Black bars detected ✓", "黑边检测完成 ✓")
                 runner.log += L.text(
@@ -1195,12 +1244,12 @@ struct CropVideoView: View {
                     "检测到裁剪：\(params.width)×\(params.height)，x=\(params.x)，y=\(params.y)\n"
                 )
             } catch {
-                guard input == requestedPath else { return }
+                guard session.input == requestedPath else { return }
                 previewError = L.text(language, "Could not detect black bars.", "无法检测黑边。")
                 runner.status = L.text(language, "Black-bar detection failed", "黑边检测失败")
                 runner.log += "ERROR: \(error.localizedDescription)\n"
             }
-            if input == requestedPath {
+            if session.input == requestedPath {
                 isDetectingBlackBars = false
             }
         }
@@ -1214,7 +1263,7 @@ struct CropVideoView: View {
         Task {
             do {
                 let data = try await Self.generatePreviewFrame(path: requestedPath)
-                guard input == requestedPath else { return }
+                guard session.input == requestedPath else { return }
                 guard let image = NSImage(data: data) else {
                     throw NSError(domain: "SimpleVideo", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not read preview image"])
                 }
@@ -1223,13 +1272,13 @@ struct CropVideoView: View {
                 }
                 previewImage = image
                 previewPixelSize = CGSize(width: cgImage.width, height: cgImage.height)
-                cropRect = adjustedCropRect(cropRect, for: selectedAspectRatioOption.ratio)
+                session.cropRect = adjustedCropRect(session.cropRect, for: selectedAspectRatioOption.ratio)
             } catch {
-                guard input == requestedPath else { return }
+                guard session.input == requestedPath else { return }
                 previewError = L.text(language, "Could not load video preview.", "无法加载视频预览。")
                 runner.log = "ERROR: \(error.localizedDescription)\n"
             }
-            if input == requestedPath {
+            if session.input == requestedPath {
                 isLoadingPreview = false
             }
         }
@@ -1288,7 +1337,7 @@ struct CropVideoView: View {
 
     private func cropRect(from params: CropParameters) -> CGRect {
         guard previewPixelSize.width > 0, previewPixelSize.height > 0 else {
-            return cropRect
+            return session.cropRect
         }
         return clampCropRect(CGRect(
             x: CGFloat(params.x) / previewPixelSize.width,

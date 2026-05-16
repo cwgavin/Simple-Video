@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var runner = FFmpegRunner()
+    @StateObject private var cropSession = CropVideoSession()
     @State private var selection: FFTask? = .crop
     @State private var isLogPanelExpanded = false
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
@@ -41,17 +42,9 @@ struct ContentView: View {
                 Group {
                     if let sel = selection {
                         GeometryReader { geo in
-                            ZStack(alignment: .topLeading) {
-                                ForEach(FFTask.allCases) { task in
-                                    ScrollView {
-                                        detail(for: task, isActive: sel == task)
-                                            .frame(minHeight: geo.size.height)
-                                    }
-                                    .opacity(sel == task ? 1 : 0)
-                                    .allowsHitTesting(sel == task)
-                                    .accessibilityHidden(sel != task)
-                                    .zIndex(sel == task ? 1 : 0)
-                                }
+                            ScrollView {
+                                detail(for: sel)
+                                    .frame(minHeight: geo.size.height)
                             }
                         }
                     } else {
@@ -62,6 +55,7 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .environmentObject(runner)
+                .environmentObject(cropSession)
 
                 Divider()
 

@@ -123,39 +123,65 @@ func ffmpegTime(_ seconds: Double) -> String {
 
 let formLabelWidth: CGFloat = 100
 
+private final class CursorRectView: NSView {
+    var cursor: NSCursor = .arrow {
+        didSet {
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.activeInKeyWindow, .inVisibleRect, .cursorUpdate, .enabledDuringMouseDrag],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
+    }
+
+    override func resetCursorRects() {
+        discardCursorRects()
+        addCursorRect(bounds, cursor: cursor)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        cursor.set()
+    }
+}
+
+private struct CursorRectRepresentable: NSViewRepresentable {
+    let cursor: NSCursor
+
+    func makeNSView(context: Context) -> CursorRectView {
+        let view = CursorRectView()
+        view.cursor = cursor
+        return view
+    }
+
+    func updateNSView(_ nsView: CursorRectView, context: Context) {
+        nsView.cursor = cursor
+    }
+}
+
 private struct PointingHandCursorModifier: ViewModifier {
     let isEnabled: Bool
-    @State private var isHovering = false
 
     func body(content: Content) -> some View {
         content
-            .onHover { hovering in
-                if hovering {
-                    isHovering = true
-                    if isEnabled {
-                        NSCursor.pointingHand.push()
-                    }
-                } else {
-                    if isHovering && isEnabled {
-                        NSCursor.pop()
-                    }
-                    isHovering = false
-                }
-            }
-            .onChange(of: isEnabled) { _, enabled in
-                guard isHovering else { return }
-                if enabled {
-                    NSCursor.pointingHand.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
-            .onDisappear {
-                if isHovering && isEnabled {
-                    NSCursor.pop()
-                }
-                isHovering = false
-            }
+            .overlay(
+                CursorRectRepresentable(cursor: isEnabled ? .pointingHand : .arrow)
+                    .allowsHitTesting(false)
+            )
     }
 }
 

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 struct CropParameters {
     let x: Int
@@ -135,5 +136,22 @@ struct CropAspectRatioOption: Identifiable, Hashable {
         default:
             return id
         }
+    }
+}
+
+final class CropVideoSession: ObservableObject {
+    @Published var input = ""
+    @Published var cropRect = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+    @Published var selectedAspectRatio = "free"
+    @Published var completedOutput = ""
+    @Published var trimStart: Double = 0
+    @Published var trimEnd: Double = 0
+    @Published var selectedTrimHandle: TrimHandleSelection = .start
+    @Published var exportQuality = CropExportQualityOption.balanced
+    @Published var exportPlaybackRate = CropPlaybackRateOption.normal
+
+    func resetCropSelection() {
+        selectedAspectRatio = "free"
+        cropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
     }
 }
