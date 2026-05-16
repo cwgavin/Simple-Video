@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var selection: FFTask? = .crop
     @State private var isLogPanelExpanded = false
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
+    @AppStorage(AppStorageKey.showLogPanel) private var showLogPanel = false
 
     private var appLanguage: AppLanguage {
         AppLanguage(rawValue: appLanguageRaw) ?? .english
@@ -72,17 +73,19 @@ struct ContentView: View {
                         if runner.isRunning {
                             Button(L.cancel(appLanguage), role: .destructive) { runner.cancel() }
                         }
-                        Button {
-                            isLogPanelExpanded.toggle()
-                        } label: {
-                            Label(
-                                isLogPanelExpanded
-                                ? L.text(appLanguage, "Hide log", "隐藏日志")
-                                : L.text(appLanguage, "Show log", "显示日志"),
-                                systemImage: isLogPanelExpanded ? "chevron.down" : "chevron.up"
-                            )
+                        if showLogPanel {
+                            Button {
+                                isLogPanelExpanded.toggle()
+                            } label: {
+                                Label(
+                                    isLogPanelExpanded
+                                    ? L.text(appLanguage, "Hide log", "隐藏日志")
+                                    : L.text(appLanguage, "Show log", "显示日志"),
+                                    systemImage: isLogPanelExpanded ? "chevron.down" : "chevron.up"
+                                )
+                            }
                         }
-                        if isLogPanelExpanded {
+                        if showLogPanel && isLogPanelExpanded {
                             Button {
                                 runner.log = ""
                                 runner.progress = 0
@@ -92,7 +95,7 @@ struct ContentView: View {
                                 .disabled(runner.log.isEmpty)
                         }
                     }
-                    if isLogPanelExpanded {
+                    if showLogPanel && isLogPanelExpanded {
                         ScrollViewReader { proxy in
                             ScrollView {
                                 Text(runner.log.isEmpty ? L.logPlaceholder(appLanguage) : runner.log)
@@ -114,6 +117,9 @@ struct ContentView: View {
                 }
                 .padding(10)
                 .environmentObject(runner)
+                .onChange(of: showLogPanel) { _, _ in
+                    isLogPanelExpanded = false
+                }
             }
         }
     }

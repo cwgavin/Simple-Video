@@ -67,6 +67,10 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     }
 }
 
+enum AppStorageKey {
+    static let showLogPanel = "showLogPanel"
+}
+
 enum L {
     static func text(_ language: AppLanguage, _ english: String, _ simplifiedChinese: String) -> String {
         switch language {

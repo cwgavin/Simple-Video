@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
+    @AppStorage(AppStorageKey.showLogPanel) private var showLogPanel = false
 
     private var language: AppLanguage {
         AppLanguage(rawValue: appLanguageRaw) ?? .english
@@ -36,11 +37,12 @@ struct SettingsView: View {
                         .labelsHidden()
                         .fixedSize()
                     }
-                    Text(language == .english
-                         ? "Changes apply immediately to supported interface text."
-                         : "更改会立即应用到已支持的界面文字。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    HStack(alignment: .top) {
+                        Text(language == .english ? "Log panel:" : "日志面板：")
+                            .frame(width: formLabelWidth, alignment: .trailing)
+                        Toggle("", isOn: $showLogPanel)
+                            .toggleStyle(.switch)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
