@@ -158,6 +158,7 @@ struct CropVideoView: View {
                 }
                 .labelsHidden()
                 .fixedSize()
+                .pointingHandCursor()
                 Spacer()
             }
 
@@ -552,6 +553,7 @@ struct CropVideoView: View {
                 }
                 .labelsHidden()
                 .fixedSize()
+                .pointingHandCursor()
                 Spacer()
             }
 
@@ -575,6 +577,7 @@ struct CropVideoView: View {
                     }
                     .labelsHidden()
                     .fixedSize()
+                    .pointingHandCursor()
                     Spacer()
                 }
 
@@ -593,6 +596,7 @@ struct CropVideoView: View {
                     }
                     .labelsHidden()
                     .fixedSize()
+                    .pointingHandCursor()
                     Spacer()
                     }
 
@@ -611,6 +615,7 @@ struct CropVideoView: View {
                     }
                     .labelsHidden()
                     .fixedSize()
+                    .pointingHandCursor()
                     Spacer()
                 }
 

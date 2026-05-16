@@ -53,7 +53,7 @@ struct ConvertView: View {
                 Text(L.text(language, "Output format:", "输出格式：")).frame(width: formLabelWidth, alignment: .trailing)
                 Picker("format", selection: $format) {
                     ForEach(videoFormats, id: \.self) { Text(".\($0)").tag($0) }
-                }.labelsHidden().fixedSize()
+                }.labelsHidden().fixedSize().pointingHandCursor()
                 Spacer()
             }
             OutputHintRow(path: completedOutput)
@@ -118,7 +118,7 @@ struct ConvertAudioView: View {
                 Text(L.text(language, "Output format:", "输出格式：")).frame(width: formLabelWidth, alignment: .trailing)
                 Picker("format", selection: $format) {
                     ForEach(audioFormats, id: \.self) { Text(".\($0)").tag($0) }
-                }.labelsHidden().fixedSize()
+                }.labelsHidden().fixedSize().pointingHandCursor()
                 Spacer()
             }
             OutputHintRow(path: completedOutput)
@@ -374,6 +374,7 @@ struct ConcatView: View {
                     }
                     .labelsHidden()
                     .fixedSize()
+                    .pointingHandCursor()
                     Spacer()
                 }
 

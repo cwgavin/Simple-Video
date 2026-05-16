@@ -64,6 +64,7 @@ struct TranscribeView: View {
                 }
                 .labelsHidden()
                 .fixedSize()
+                .pointingHandCursor()
                 .padding(.leading, 6)
                 Spacer()
             }
@@ -108,6 +109,7 @@ struct TranscribeView: View {
                                   : L.text(appLanguage, "Download \(selectedModel.displayName)", "下载 \(modelDisplayName(selectedModel))"),
                                   systemImage: "arrow.down.circle")
                         }
+                        .pointingHandCursor()
                         .disabled(isDownloadingModel || runner.isRunning)
                         if isDownloadingModel {
                             ProgressView(value: downloadProgress)

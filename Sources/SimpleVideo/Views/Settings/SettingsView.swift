@@ -36,12 +36,14 @@ struct SettingsView: View {
                         }
                         .labelsHidden()
                         .fixedSize()
+                        .pointingHandCursor()
                     }
                     HStack(alignment: .top) {
                         Text(language == .english ? "Log panel:" : "日志面板：")
                             .frame(width: formLabelWidth, alignment: .trailing)
                         Toggle("", isOn: $showLogPanel)
                             .toggleStyle(.switch)
+                            .pointingHandCursor()
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
