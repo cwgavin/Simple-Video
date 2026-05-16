@@ -5,6 +5,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var runner = FFmpegRunner()
     @StateObject private var cropSession = CropVideoSession()
+    @StateObject private var concatSession = ConcatSession()
     @State private var selection: FFTask? = .crop
     @State private var isLogPanelExpanded = false
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
@@ -19,7 +20,7 @@ struct ContentView: View {
         switch task {
         case .crop:         CropVideoView(isActive: isActive)
         case .mergeAV:      MergeAVView()
-        case .concat:       ConcatView()
+        case .concat:       ConcatView(session: concatSession)
         case .split:        SplitByTimestampsView()
         case .convert:      ConvertView()
         case .convertAudio: ConvertAudioView()

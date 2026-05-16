@@ -172,12 +172,55 @@ struct MergeAVView: View {
 
 // MARK: - Reusable UI
 
+enum ConcatSortOrder: String, CaseIterable, Identifiable {
+    case manual
+    case nameAscending
+    case nameDescending
+    case createdAscending
+    case createdDescending
+    case modifiedAscending
+    case modifiedDescending
+
+    var id: Self { self }
+
+    func title(language: AppLanguage) -> String {
+        switch self {
+        case .manual:
+            return L.text(language, "Manual", "手动")
+        case .nameAscending:
+            return L.text(language, "Name (A → Z)", "名称（A → Z）")
+        case .nameDescending:
+            return L.text(language, "Name (Z → A)", "名称（Z → A）")
+        case .createdAscending:
+            return L.text(language, "Created (Oldest First)", "创建时间（从旧到新）")
+        case .createdDescending:
+            return L.text(language, "Created (Newest First)", "创建时间（从新到旧）")
+        case .modifiedAscending:
+            return L.text(language, "Modified (Oldest First)", "修改时间（从旧到新）")
+        case .modifiedDescending:
+            return L.text(language, "Modified (Newest First)", "修改时间（从新到旧）")
+        }
+    }
+}
+
+final class ConcatSession: ObservableObject {
+    @Published var mediaType = "video"
+    @Published var files: [String] = []
+    @Published var sortOrder: ConcatSortOrder = .manual
+    @Published var completedOutput = ""
+}
+
 struct ConcatView: View {
+    private struct FileMetadata {
+        let path: String
+        let name: String
+        let createdAt: Date
+        let modifiedAt: Date
+    }
+
     @EnvironmentObject var runner: FFmpegRunner
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
-    @State private var mediaType = "video"
-    @State private var files: [String] = []
-    @State private var completedOutput = ""
+    @ObservedObject var session: ConcatSession
     @State private var isDropTarget = false
 
     private let mediaTypes = ["video", "audio"]
@@ -195,7 +238,7 @@ struct ConcatView: View {
     }
 
     private var contentTypes: [UTType] {
-        mediaType == "video"
+        session.mediaType == "video"
             ? [.movie, .video]
             : [.audio]
     }
@@ -207,7 +250,7 @@ struct ConcatView: View {
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = contentTypes
         if panel.runModal() == .OK {
-            files.append(contentsOf: panel.urls.map(\.path))
+            appendFiles(panel.urls.map(\.path))
         }
     }
 
@@ -219,17 +262,90 @@ struct ConcatView: View {
                 let values = try? u.resourceValues(forKeys: [.contentTypeKey])
                 guard let ct = values?.contentType,
                       allowed.contains(where: { ct.conforms(to: $0) }) else { return }
-                DispatchQueue.main.async { files.append(u.path) }
+                DispatchQueue.main.async { appendFiles([u.path]) }
             }
         }
         return true
+    }
+
+    private func appendFiles(_ newFiles: [String]) {
+        guard !newFiles.isEmpty else { return }
+        session.files.append(contentsOf: newFiles)
+        applySortOrder()
+        session.completedOutput = ""
+    }
+
+    private func applySortOrder() {
+        guard session.sortOrder != .manual else { return }
+        session.files = sortedFiles(session.files, using: session.sortOrder)
+    }
+
+    private func sortedFiles(_ paths: [String], using order: ConcatSortOrder) -> [String] {
+        guard order != .manual else { return paths }
+        let metadata = paths.map(fileMetadata(for:))
+        return metadata.sorted { lhs, rhs in
+            compare(lhs, rhs, using: order)
+        }
+        .map(\.path)
+    }
+
+    private func fileMetadata(for path: String) -> FileMetadata {
+        let url = URL(fileURLWithPath: path)
+        let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+        return FileMetadata(
+            path: path,
+            name: url.lastPathComponent,
+            createdAt: values?.creationDate ?? .distantPast,
+            modifiedAt: values?.contentModificationDate ?? .distantPast
+        )
+    }
+
+    private func compare(_ lhs: FileMetadata, _ rhs: FileMetadata, using order: ConcatSortOrder) -> Bool {
+        let primary: ComparisonResult
+        switch order {
+        case .manual:
+            return false
+        case .nameAscending:
+            primary = compareText(lhs.name, rhs.name)
+        case .nameDescending:
+            primary = compareText(rhs.name, lhs.name)
+        case .createdAscending:
+            primary = compareDate(lhs.createdAt, rhs.createdAt)
+        case .createdDescending:
+            primary = compareDate(rhs.createdAt, lhs.createdAt)
+        case .modifiedAscending:
+            primary = compareDate(lhs.modifiedAt, rhs.modifiedAt)
+        case .modifiedDescending:
+            primary = compareDate(rhs.modifiedAt, lhs.modifiedAt)
+        }
+
+        if primary != .orderedSame {
+            return primary == .orderedAscending
+        }
+
+        let secondary = compareText(lhs.name, rhs.name)
+        if secondary != .orderedSame {
+            return secondary == .orderedAscending
+        }
+
+        return lhs.path < rhs.path
+    }
+
+    private func compareText(_ lhs: String, _ rhs: String) -> ComparisonResult {
+        (lhs as NSString).localizedStandardCompare(rhs)
+    }
+
+    private func compareDate(_ lhs: Date, _ rhs: Date) -> ComparisonResult {
+        if lhs < rhs { return .orderedAscending }
+        if lhs > rhs { return .orderedDescending }
+        return .orderedSame
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text(L.text(language, "Type:", "类型：")).frame(width: formLabelWidth, alignment: .trailing)
-                Picker("type", selection: $mediaType) {
+                Picker("type", selection: $session.mediaType) {
                     ForEach(mediaTypes, id: \.self) { Text(mediaTypeTitle($0)).tag($0) }
                 }
                 .labelsHidden()
@@ -240,68 +356,87 @@ struct ConcatView: View {
             }
             HStack {
                 Text(L.text(language, "Files:", "文件：")).frame(width: formLabelWidth, alignment: .trailing)
-                Text(L.fileCount(language, files.count))
+                Text(L.fileCount(language, session.files.count))
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(L.text(language, "Add Files…", "添加文件…")) { addFiles() }
-                Button(L.text(language, "Clear", "清空")) { files.removeAll(); completedOutput = "" }
-                    .disabled(files.isEmpty)
+                Button(L.text(language, "Clear", "清空")) { session.files.removeAll(); session.completedOutput = "" }
+                    .disabled(session.files.isEmpty)
             }
 
-            HStack(alignment: .top) {
-                Spacer().frame(width: formLabelWidth)
-                Group {
-                    if files.isEmpty {
-                        VStack {
-                            Spacer()
-                            Text(L.text(language, "Drop files here or double-click to add", "将文件拖到这里，或双击添加"))
-                                .foregroundColor(.secondary)
-                            Spacer()
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(L.text(language, "Sort By:", "排序：")).frame(width: formLabelWidth, alignment: .trailing)
+                    Picker("sortOrder", selection: $session.sortOrder) {
+                        ForEach(ConcatSortOrder.allCases) { order in
+                            Text(order.title(language: language)).tag(order)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 80)
-                    } else {
-                        List {
-                            ForEach(Array(files.enumerated()), id: \.offset) { i, file in
-                                HStack {
-                                    Text("\(i + 1).")
-                                        .foregroundColor(.secondary)
-                                        .frame(width: 24, alignment: .trailing)
-                                    Text((file as NSString).lastPathComponent)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                        .help(file)
-                                    Spacer()
-                                    Button {
-                                        files.remove(at: i)
-                                        completedOutput = ""
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    Spacer()
+                }
+
+                HStack(alignment: .top) {
+                    Spacer().frame(width: formLabelWidth)
+                    Group {
+                        if session.files.isEmpty {
+                            VStack {
+                                Spacer()
+                                Text(L.text(language, "Drop files here or click Add Files", "将文件拖到这里，或点击添加文件"))
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            List {
+                                ForEach(Array(session.files.enumerated()), id: \.offset) { i, file in
+                                    HStack {
+                                        Text("\(i + 1).")
                                             .foregroundColor(.secondary)
+                                            .frame(width: 24, alignment: .trailing)
+                                        Text((file as NSString).lastPathComponent)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                            .help(file)
+                                        Spacer()
+                                        Button {
+                                            session.files.remove(at: i)
+                                            session.completedOutput = ""
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .buttonStyle(.borderless)
                                     }
-                                    .buttonStyle(.borderless)
+                                }
+                                .onMove { from, to in
+                                    let previousFiles = session.files
+                                    session.files.move(fromOffsets: from, toOffset: to)
+                                    guard session.files != previousFiles else { return }
+                                    if session.sortOrder != .manual {
+                                        session.sortOrder = .manual
+                                    }
+                                    session.completedOutput = ""
                                 }
                             }
-                            .onMove { from, to in
-                                files.move(fromOffsets: from, toOffset: to)
-                                completedOutput = ""
-                            }
+                            .frame(maxHeight: .infinity)
                         }
-                        .frame(maxHeight: 160)
                     }
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(isDropTarget ? Color.accentColor : Color.secondary.opacity(session.files.isEmpty ? 0.3 : 0),
+                                          style: session.files.isEmpty && !isDropTarget ? StrokeStyle(lineWidth: 1, dash: [5]) : StrokeStyle(lineWidth: 1.5))
+                    )
+                    .onTapGesture(count: 2) { addFiles() }
+                    .onDrop(of: [UTType.fileURL], isTargeted: $isDropTarget, perform: handleDrop)
                 }
-                .cornerRadius(6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(isDropTarget ? Color.accentColor : Color.secondary.opacity(files.isEmpty ? 0.3 : 0),
-                                      style: files.isEmpty && !isDropTarget ? StrokeStyle(lineWidth: 1, dash: [5]) : StrokeStyle(lineWidth: 1.5))
-                )
-                .onTapGesture(count: 2) { addFiles() }
-                .onDrop(of: [UTType.fileURL], isTargeted: $isDropTarget, perform: handleDrop)
             }
 
-            OutputHintRow(path: completedOutput)
-            RunButton(canRun: files.count >= 2) {
-                let exts = Set(files.map { inputExt($0).lowercased() })
+            OutputHintRow(path: session.completedOutput)
+            RunButton(canRun: session.files.count >= 2) {
+                let exts = Set(session.files.map { inputExt($0).lowercased() })
                 let mixed = exts.count > 1
 
                 if mixed {
@@ -322,13 +457,13 @@ struct ConcatView: View {
                     // Use the concat *filter* for mixed formats — the concat
                     // demuxer can't handle heterogeneous codecs/sample-rates.
                     var args: [String] = []
-                    for f in files { args += ["-i", f] }
+                    for f in session.files { args += ["-i", f] }
 
-                    let n = files.count
-                    if mediaType == "video" {
+                    let n = session.files.count
+                    if session.mediaType == "video" {
                         let inputs = (0..<n).map { "[\($0):v][\($0):a]" }.joined()
                         let filter = "\(inputs)concat=n=\(n):v=1:a=1[outv][outa]"
-                        let out = makeOutputPath(input: files[0], ext: "mp4")
+                        let out = makeOutputPath(input: session.files[0], ext: "mp4")
                         args += ["-filter_complex", filter,
                                  "-map", "[outv]", "-map", "[outa]",
                                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
@@ -336,34 +471,38 @@ struct ConcatView: View {
                     } else {
                         let inputs = (0..<n).map { "[\($0):a]" }.joined()
                         let filter = "\(inputs)concat=n=\(n):v=0:a=1[outa]"
-                        let out = makeOutputPath(input: files[0], ext: "m4a")
+                        let out = makeOutputPath(input: session.files[0], ext: "m4a")
                         args += ["-filter_complex", filter,
                                  "-map", "[outa]",
                                  "-c:a", "aac", "-b:a", "192k", "-y", out]
                     }
 
-                    runner.run(args: args, inputForDuration: nil) { completedOutput = $0 }
+                    runner.run(args: args, inputForDuration: nil) { session.completedOutput = $0 }
                 } else {
                     // Same format — use the concat demuxer with stream copy (fast).
                     let tmp = NSTemporaryDirectory() + "simple-video-concat-\(ProcessInfo.processInfo.globallyUniqueString).txt"
-                    let listing = files.map { "file '\($0.replacingOccurrences(of: "'", with: "'\\''"))'" }
+                    let listing = session.files.map { "file '\($0.replacingOccurrences(of: "'", with: "'\\''"))'" }
                         .joined(separator: "\n")
                     try? listing.write(toFile: tmp, atomically: true, encoding: .utf8)
 
-                    let out = makeOutputPath(input: files[0], ext: inputExt(files[0]))
+                    let out = makeOutputPath(input: session.files[0], ext: inputExt(session.files[0]))
                     runner.run(
                         args: ["-f", "concat", "-safe", "0", "-i", tmp,
                                "-c", "copy", "-y", out],
                         inputForDuration: nil
                     ) {
-                        completedOutput = $0
+                        session.completedOutput = $0
                         try? FileManager.default.removeItem(atPath: tmp)
                     }
                 }
             }
         }
         .padding()
-        .onChange(of: mediaType) { _, _ in files.removeAll(); completedOutput = "" }
+        .onChange(of: session.mediaType) { _, _ in session.files.removeAll(); session.completedOutput = "" }
+        .onChange(of: session.sortOrder) { _, _ in
+            applySortOrder()
+            session.completedOutput = ""
+        }
     }
 }
 
