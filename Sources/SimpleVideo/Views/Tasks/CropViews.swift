@@ -459,6 +459,7 @@ struct CropVideoView: View {
                             Text("S").tag(TrimHandleSelection.start)
                             Text("E").tag(TrimHandleSelection.end)
                         }
+                        .pointingHandCursor()
                         .pickerStyle(.segmented)
                         .labelsHidden()
                         .frame(width: 90)
@@ -654,6 +655,7 @@ struct CropVideoView: View {
                     in: 0...max(playbackDuration, 0.01)
                 )
                 .disabled(playbackDuration <= 0)
+                .pointingHandCursor()
 
                 Text("\(formatPlaybackTime(playbackTime)) / \(formatPlaybackTime(playbackDuration))")
                     .font(.caption)

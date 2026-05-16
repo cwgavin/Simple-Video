@@ -42,6 +42,7 @@ struct TrimTimelineView: View {
                     .offset(x: endX, y: 20)
 
                 timeHandle(label: startHandleLabel, isSelected: selectedHandle == .start)
+                    .pointingHandCursor()
                     .position(x: startX, y: 27)
                     .onTapGesture {
                         onSelectStart()
@@ -49,6 +50,7 @@ struct TrimTimelineView: View {
                     .gesture(startDragGesture(width: width))
 
                 timeHandle(label: endHandleLabel, isSelected: selectedHandle == .end)
+                    .pointingHandCursor()
                     .position(x: endX, y: 27)
                     .onTapGesture {
                         onSelectEnd()
@@ -59,6 +61,7 @@ struct TrimTimelineView: View {
                     .fill(Color.white)
                     .frame(width: 2, height: 34)
                     .shadow(radius: 1)
+                    .pointingHandCursor()
                     .position(x: playheadX, y: 27)
                     .gesture(playheadDragGesture(width: width))
 

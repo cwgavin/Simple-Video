@@ -4,6 +4,7 @@ import Foundation
 
 enum FFTask: String, CaseIterable, Identifiable, Hashable {
     case crop = "Crop Video"
+    case cropAudio = "Crop Audio"
     case mergeAV = "Merge A/V"
     case concat = "Concatenate"
     case split = "Split by Timestamps"
@@ -21,6 +22,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
             return rawValue
         case .simplifiedChinese:
             switch self {
+            case .cropAudio:   return "裁剪音频"
             case .mergeAV:      return "合并音视频"
             case .concat:       return "拼接文件"
             case .split:        return "按时间戳分割"
@@ -36,6 +38,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
 
     var icon: String {
         switch self {
+        case .cropAudio:     return "waveform"
         case .mergeAV:       return "plus.square.on.square"
         case .concat:        return "text.line.first.and.arrowtriangle.forward"
         case .split:         return "scissors"

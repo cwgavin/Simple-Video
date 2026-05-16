@@ -6,6 +6,7 @@ struct ContentView: View {
     @StateObject private var runner = FFmpegRunner()
     @StateObject private var concatSession = ConcatSession()
     let cropSession: CropVideoSession
+    let cropAudioSession: CropAudioSession
     @State private var selection: FFTask? = .crop
     @State private var isLogPanelExpanded = false
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
@@ -19,6 +20,7 @@ struct ContentView: View {
     private func detail(for task: FFTask, isActive: Bool = true) -> some View {
         switch task {
         case .crop:         CropVideoView(isActive: isActive)
+        case .cropAudio:    CropAudioView(isActive: isActive)
         case .mergeAV:      MergeAVView()
         case .concat:       ConcatView(session: concatSession)
         case .split:        SplitByTimestampsView()
@@ -57,6 +59,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .environmentObject(runner)
                 .environmentObject(cropSession)
+                .environmentObject(cropAudioSession)
 
                 Divider()
 

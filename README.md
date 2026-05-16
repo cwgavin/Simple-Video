@@ -8,6 +8,7 @@ Built with **SwiftUI**. Powered by `ffmpeg` and `whisper.cpp` under the hood.
 ## Features
 
 - **Crop** a video visually with draggable crop handles, aspect-ratio presets, auto black-bar detection, and an optional start/end trim range with preview
+- **Crop** audio with previewable start/end trim selection and playback-rate export
 - **Convert** video between formats / codecs (mp4, mov, mkv, webm, avi, flv, m4v, ts)
 - **Convert** audio between formats (mp3, aac, wav, flac, ogg, m4a, wma, aiff, opus)
 - **Merge** separate video + audio tracks

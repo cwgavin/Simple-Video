@@ -34,9 +34,9 @@ struct SettingsView: View {
                                 Text(option.displayName).tag(option.rawValue)
                             }
                         }
+                        .pointingHandCursor()
                         .labelsHidden()
                         .fixedSize()
-                        .pointingHandCursor()
                     }
                     HStack(alignment: .top) {
                         Text(language == .english ? "Log panel:" : "日志面板：")

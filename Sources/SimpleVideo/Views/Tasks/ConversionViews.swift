@@ -348,6 +348,7 @@ struct ConcatView: View {
                 Picker("type", selection: $session.mediaType) {
                     ForEach(mediaTypes, id: \.self) { Text(mediaTypeTitle($0)).tag($0) }
                 }
+                .pointingHandCursor()
                 .labelsHidden()
                 .pickerStyle(.radioGroup)
                 .horizontalRadioGroupLayout()

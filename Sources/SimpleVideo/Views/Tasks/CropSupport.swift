@@ -197,6 +197,83 @@ final class CropVideoSession: ObservableObject {
     }
 }
 
+final class CropAudioSession: ObservableObject {
+    private struct BaselineState {
+        let input: String
+        let trimStart: Double
+        let trimEnd: Double
+    }
+
+    @Published var input = ""
+    @Published var completedOutput = ""
+    @Published var trimStart: Double = 0
+    @Published var trimEnd: Double = 0
+    @Published var selectedTrimHandle: TrimHandleSelection = .start
+    @Published var exportPlaybackRate = CropPlaybackRateOption.normal
+    private var baselineState: BaselineState?
+
+    var hasPendingChanges: Bool {
+        guard !input.isEmpty, let baselineState else { return false }
+        let current = currentState()
+        return current.input != baselineState.input
+            || abs(current.trimStart - baselineState.trimStart) > CropVideoSession.comparisonTolerance
+            || abs(current.trimEnd - baselineState.trimEnd) > CropVideoSession.comparisonTolerance
+    }
+
+    func clearPendingChangesBaseline() {
+        baselineState = nil
+    }
+
+    func markCurrentStateAsBaseline() {
+        guard !input.isEmpty else {
+            baselineState = nil
+            return
+        }
+        baselineState = currentState()
+    }
+
+    private func currentState() -> BaselineState {
+        BaselineState(
+            input: input,
+            trimStart: trimStart,
+            trimEnd: trimEnd
+        )
+    }
+}
+
+func cropMinimumTrimDuration(for duration: Double) -> Double {
+    0.1
+}
+
+func formatCropPlaybackTime(_ seconds: Double) -> String {
+    guard seconds.isFinite, seconds > 0 else { return "0:00" }
+    let wholeSeconds = Int(seconds.rounded(.down))
+    return String(format: "%d:%02d", wholeSeconds / 60, wholeSeconds % 60)
+}
+
+func cropAudioTempoFilter(for rate: Double) -> String {
+    guard rate.isFinite, rate > 0 else { return "atempo=1.0" }
+
+    var remaining = rate
+    var components: [String] = []
+
+    while remaining > 2.0 {
+        components.append("atempo=2.0")
+        remaining /= 2.0
+    }
+
+    while remaining < 0.5 {
+        components.append("atempo=0.5")
+        remaining /= 0.5
+    }
+
+    if abs(remaining - 1.0) > CropVideoSession.comparisonTolerance || components.isEmpty {
+        components.append(String(format: "atempo=%.8f", remaining))
+    }
+
+    return components.joined(separator: ",")
+}
+
 private extension CGRect {
     func isApproximatelyEqual(to other: CGRect, tolerance: CGFloat = CropVideoSession.comparisonTolerance) -> Bool {
         abs(minX - other.minX) <= tolerance
