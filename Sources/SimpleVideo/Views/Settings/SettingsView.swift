@@ -85,12 +85,6 @@ struct SettingsView: View {
                         licenseLink(language == .english ? "OpenAI Whisper license" : "OpenAI Whisper 许可证",
                                     "https://github.com/openai/whisper/blob/main/LICENSE")
                     }
-
-                    Text(language == .english
-                         ? "FFmpeg may include codecs/libraries with different licenses depending on the bundled build."
-                         : "根据打包的 FFmpeg 构建方式，其中的编解码器和库可能使用不同许可证。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
