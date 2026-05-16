@@ -70,6 +70,7 @@ struct ContentView: View {
                         Spacer()
                         if runner.isRunning {
                             Button(L.cancel(appLanguage), role: .destructive) { runner.cancel() }
+                                .pointingHandCursor()
                         }
                         if showLogPanel {
                             Button {
@@ -82,6 +83,7 @@ struct ContentView: View {
                                     systemImage: isLogPanelExpanded ? "chevron.down" : "chevron.up"
                                 )
                             }
+                                .pointingHandCursor()
                         }
                         if showLogPanel && isLogPanelExpanded {
                             Button {
@@ -91,6 +93,7 @@ struct ContentView: View {
                                 Label(L.clearLog(appLanguage), systemImage: "trash")
                             }
                                 .disabled(runner.log.isEmpty)
+                                .pointingHandCursor()
                         }
                     }
                     if showLogPanel && isLogPanelExpanded {

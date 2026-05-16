@@ -84,6 +84,7 @@ struct TranscribeView: View {
                                     Label(L.text(appLanguage, "Delete \(selectedModel.displayName)", "删除 \(modelDisplayName(selectedModel))"), systemImage: "trash")
                                 }
                                 .disabled(isDownloadingModel || isTranscribing || runner.isRunning)
+                                .pointingHandCursor()
                                 Text(L.text(appLanguage,
                                             "Removes it from \(WhisperModelCatalog.modelDirectoryDisplayPath)",
                                             "从 \(WhisperModelCatalog.modelDirectoryDisplayPath) 中移除"))
