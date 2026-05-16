@@ -121,14 +121,6 @@ struct CropAudioView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     playbackControls
 
-                    Text(L.text(
-                        language,
-                        "Use the controls below to preview the audio and choose the exported range.",
-                        "使用下方控件预览音频并选择导出范围。"
-                    ))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
                     if !playbackError.isEmpty {
                         Text(playbackError)
                             .font(.caption)

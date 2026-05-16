@@ -361,8 +361,10 @@ struct ConcatView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(L.text(language, "Add Files…", "添加文件…")) { addFiles() }
+                    .pointingHandCursor()
                 Button(L.text(language, "Clear", "清空")) { session.files.removeAll(); session.completedOutput = "" }
                     .disabled(session.files.isEmpty)
+                    .pointingHandCursor()
             }
 
             VStack(spacing: 8) {
