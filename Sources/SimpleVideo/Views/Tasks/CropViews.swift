@@ -335,6 +335,7 @@ struct CropVideoView: View {
             }
         }
         .onChange(of: session.input) { _, newValue in
+            session.clearPendingChangesBaseline()
             session.completedOutput = ""
             previewImage = nil
             previewPixelSize = .zero
@@ -755,6 +756,9 @@ struct CropVideoView: View {
                         } else {
                             clampTrimRange(to: playbackDuration)
                         }
+                        if resetTrimRange {
+                            session.markCurrentStateAsBaseline()
+                        }
                     }
                 }
             } catch {
@@ -1126,10 +1130,16 @@ struct CropVideoView: View {
             if let trimRange = selectedTrimRange {
                 var args = ["-i", session.input, "-ss", ffmpegTime(trimRange.start), "-t", ffmpegTime(trimRange.end - trimRange.start)]
                 args += reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
-                runner.run(args: args, inputForDuration: session.input) { session.completedOutput = $0 }
+                runner.run(args: args, inputForDuration: session.input) {
+                    session.completedOutput = $0
+                    session.markCurrentStateAsBaseline()
+                }
             } else {
                 let args = ["-i", session.input] + reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
-                runner.run(args: args, inputForDuration: session.input) { session.completedOutput = $0 }
+                runner.run(args: args, inputForDuration: session.input) {
+                    session.completedOutput = $0
+                    session.markCurrentStateAsBaseline()
+                }
             }
             return
         }
@@ -1145,7 +1155,10 @@ struct CropVideoView: View {
         } else {
             args = ["-i", session.input] + copyOutputArguments(output: out)
         }
-        runner.run(args: args, inputForDuration: session.input) { session.completedOutput = $0 }
+        runner.run(args: args, inputForDuration: session.input) {
+            session.completedOutput = $0
+            session.markCurrentStateAsBaseline()
+        }
     }
 
     private func reencodedOutputArguments(output: String, cropParameters: CropParameters?) -> [String] {

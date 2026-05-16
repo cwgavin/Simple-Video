@@ -4,8 +4,8 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var runner = FFmpegRunner()
-    @StateObject private var cropSession = CropVideoSession()
     @StateObject private var concatSession = ConcatSession()
+    let cropSession: CropVideoSession
     @State private var selection: FFTask? = .crop
     @State private var isLogPanelExpanded = false
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue

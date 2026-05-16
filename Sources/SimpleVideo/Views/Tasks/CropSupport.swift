@@ -140,6 +140,16 @@ struct CropAspectRatioOption: Identifiable, Hashable {
 }
 
 final class CropVideoSession: ObservableObject {
+    private struct BaselineState {
+        let input: String
+        let cropRect: CGRect
+        let trimStart: Double
+        let trimEnd: Double
+    }
+
+    private static let fullFrameCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+    fileprivate static let comparisonTolerance = 0.0001
+
     @Published var input = ""
     @Published var cropRect = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
     @Published var selectedAspectRatio = "free"
@@ -149,9 +159,49 @@ final class CropVideoSession: ObservableObject {
     @Published var selectedTrimHandle: TrimHandleSelection = .start
     @Published var exportQuality = CropExportQualityOption.balanced
     @Published var exportPlaybackRate = CropPlaybackRateOption.normal
+    private var baselineState: BaselineState?
+
+    var hasPendingChanges: Bool {
+        guard !input.isEmpty, let baselineState else { return false }
+        let current = currentState()
+        return current.input != baselineState.input
+            || !current.cropRect.isApproximatelyEqual(to: baselineState.cropRect)
+            || abs(current.trimStart - baselineState.trimStart) > Self.comparisonTolerance
+            || abs(current.trimEnd - baselineState.trimEnd) > Self.comparisonTolerance
+    }
 
     func resetCropSelection() {
         selectedAspectRatio = "free"
-        cropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        cropRect = Self.fullFrameCropRect
+    }
+
+    func clearPendingChangesBaseline() {
+        baselineState = nil
+    }
+
+    func markCurrentStateAsBaseline() {
+        guard !input.isEmpty else {
+            baselineState = nil
+            return
+        }
+        baselineState = currentState()
+    }
+
+    private func currentState() -> BaselineState {
+        BaselineState(
+            input: input,
+            cropRect: cropRect,
+            trimStart: trimStart,
+            trimEnd: trimEnd
+        )
+    }
+}
+
+private extension CGRect {
+    func isApproximatelyEqual(to other: CGRect, tolerance: CGFloat = CropVideoSession.comparisonTolerance) -> Bool {
+        abs(minX - other.minX) <= tolerance
+            && abs(minY - other.minY) <= tolerance
+            && abs(width - other.width) <= tolerance
+            && abs(height - other.height) <= tolerance
     }
 }
