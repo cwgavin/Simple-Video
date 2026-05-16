@@ -1251,10 +1251,6 @@ struct CropVideoView: View {
                 .disabled(playbackDuration <= 0)
                 .pointingHandCursor(enabled: !playbackControlsDisabled)
 
-                Text(L.text(language, "Preview playhead:", "预览播放头："))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
                 Slider(
                     value: Binding(
                         get: { playbackTime },
