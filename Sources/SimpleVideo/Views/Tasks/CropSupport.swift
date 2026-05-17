@@ -156,6 +156,7 @@ final class CropVideoSession: ObservableObject {
     @Published var completedOutput = ""
     @Published var trimStart: Double = 0
     @Published var trimEnd: Double = 0
+    @Published var previewPlaybackTime: Double = 0
     @Published var selectedTrimHandle: TrimHandleSelection = .start
     @Published var exportQuality = CropExportQualityOption.balanced
     @Published var exportPlaybackRate = CropPlaybackRateOption.normal
@@ -208,6 +209,7 @@ final class CropAudioSession: ObservableObject {
     @Published var completedOutput = ""
     @Published var trimStart: Double = 0
     @Published var trimEnd: Double = 0
+    @Published var previewPlaybackTime: Double = 0
     @Published var selectedTrimHandle: TrimHandleSelection = .start
     @Published var exportPlaybackRate = CropPlaybackRateOption.normal
     private var baselineState: BaselineState?

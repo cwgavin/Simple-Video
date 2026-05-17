@@ -312,31 +312,34 @@ struct CropVideoView: View {
         }
         .onAppear {
             if isActive, !session.input.isEmpty, player == nil {
-                startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0)
+                startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0, preservePlaybackState: true)
             }
             if isActive, !session.input.isEmpty, previewImage == nil, !isLoadingPreview {
                 loadPreview(for: session.input)
             }
         }
         .onDisappear {
+            session.previewPlaybackTime = playbackTime
             cleanupPreviewSession()
         }
         .onChange(of: isActive) { _, active in
                 if active {
                 if !session.input.isEmpty, player == nil {
-                    startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0)
+                    startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0, preservePlaybackState: true)
                 }
                 if !session.input.isEmpty, previewImage == nil, !isLoadingPreview {
                     loadPreview(for: session.input)
                 }
             } else {
                 showingLargeEditor = false
+                session.previewPlaybackTime = playbackTime
                 cleanupPreviewSession()
             }
         }
         .onChange(of: session.input) { _, newValue in
             session.clearPendingChangesBaseline()
             session.completedOutput = ""
+            session.previewPlaybackTime = 0
             previewImage = nil
             previewPixelSize = .zero
             session.resetCropSelection()
@@ -354,6 +357,9 @@ struct CropVideoView: View {
         }
         .onChange(of: session.selectedAspectRatio) { _, _ in
             session.cropRect = adjustedCropRect(session.cropRect, for: selectedAspectRatioOption.ratio)
+        }
+        .onChange(of: playbackTime) { _, newValue in
+            session.previewPlaybackTime = max(newValue, 0)
         }
     }
 
@@ -667,9 +673,14 @@ struct CropVideoView: View {
         }
     }
 
-    private func startPreviewSession(for path: String, resetTrimRange: Bool) {
+    private func startPreviewSession(for path: String, resetTrimRange: Bool, preservePlaybackState: Bool = false) {
         cleanupPreviewProxy()
-        setupPlayback(previewPath: path, metadataPath: path, resetTrimRange: resetTrimRange)
+        setupPlayback(
+            previewPath: path,
+            metadataPath: path,
+            resetTrimRange: resetTrimRange,
+            preservePlaybackState: preservePlaybackState
+        )
         preparePreviewProxyFallback(for: path)
     }
 
@@ -679,9 +690,7 @@ struct CropVideoView: View {
         resetTrimRange: Bool,
         preservePlaybackState: Bool = false
     ) {
-        let preservedTime = preservePlaybackState
-            ? min(max(playbackTime, 0), max(playbackDuration, 0))
-            : 0
+        let preservedTime = preservePlaybackState ? max(session.previewPlaybackTime, 0) : 0
         let shouldResumePlayback = preservePlaybackState && isPlaying
         let shouldKeepTrimPreview = preservePlaybackState && isPreviewingTrim
         let shouldKeepTrimPreviewPaused = preservePlaybackState && isTrimPreviewPaused

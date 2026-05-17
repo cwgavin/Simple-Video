@@ -151,30 +151,44 @@ struct CropAudioView: View {
         .padding()
         .onAppear {
             if isActive, !session.input.isEmpty, player == nil {
-                startPlaybackSession(for: session.input, resetTrimRange: session.trimEnd <= 0)
+                startPlaybackSession(
+                    for: session.input,
+                    resetTrimRange: session.trimEnd <= 0,
+                    preservePlaybackState: true
+                )
             }
         }
         .onDisappear {
+            session.previewPlaybackTime = playbackTime
             cleanupPlayback()
         }
         .onChange(of: isActive) { _, active in
             if active {
                 if !session.input.isEmpty, player == nil {
-                    startPlaybackSession(for: session.input, resetTrimRange: session.trimEnd <= 0)
+                    startPlaybackSession(
+                        for: session.input,
+                        resetTrimRange: session.trimEnd <= 0,
+                        preservePlaybackState: true
+                    )
                 }
             } else {
+                session.previewPlaybackTime = playbackTime
                 cleanupPlayback()
             }
         }
         .onChange(of: session.input) { _, newValue in
             session.clearPendingChangesBaseline()
             session.completedOutput = ""
+            session.previewPlaybackTime = 0
             playbackError = ""
             if isActive {
                 startPlaybackSession(for: newValue, resetTrimRange: true)
             } else {
                 cleanupPlayback(resetState: true, resetTrimRange: true)
             }
+        }
+        .onChange(of: playbackTime) { _, newValue in
+            session.previewPlaybackTime = max(newValue, 0)
         }
     }
 
@@ -382,14 +396,20 @@ struct CropAudioView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func startPlaybackSession(for path: String, resetTrimRange: Bool) {
-        setupPlayback(path: path, resetTrimRange: resetTrimRange)
+    private func startPlaybackSession(
+        for path: String,
+        resetTrimRange: Bool,
+        preservePlaybackState: Bool = false
+    ) {
+        setupPlayback(
+            path: path,
+            resetTrimRange: resetTrimRange,
+            preservePlaybackState: preservePlaybackState
+        )
     }
 
     private func setupPlayback(path: String, resetTrimRange: Bool, preservePlaybackState: Bool = false) {
-        let preservedTime = preservePlaybackState
-            ? min(max(playbackTime, 0), max(playbackDuration, 0))
-            : 0
+        let preservedTime = preservePlaybackState ? max(session.previewPlaybackTime, 0) : 0
         let shouldResumePlayback = preservePlaybackState && isPlaying
         let shouldKeepTrimPreview = preservePlaybackState && isPreviewingTrim
         let shouldKeepTrimPreviewPaused = preservePlaybackState && isTrimPreviewPaused
