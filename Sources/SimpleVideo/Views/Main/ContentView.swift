@@ -64,7 +64,10 @@ struct ContentView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 6) {
-                    ProgressView(value: runner.progress)
+                    if runner.isRunning {
+                        ProgressView(value: runner.progress)
+                    }
+                    
                     HStack {
                         Text(runner.status).font(.caption).foregroundColor(.secondary)
                         Spacer()
@@ -89,6 +92,7 @@ struct ContentView: View {
                             Button {
                                 runner.log = ""
                                 runner.progress = 0
+                                runner.status = L.text(appLanguage, "Idle", "空闲")
                             } label: {
                                 Label(L.clearLog(appLanguage), systemImage: "trash")
                             }
@@ -96,11 +100,12 @@ struct ContentView: View {
                                 .pointingHandCursor()
                         }
                     }
+                    
                     if showLogPanel && isLogPanelExpanded {
                         ScrollViewReader { proxy in
                             ScrollView {
                                 Text(runner.log.isEmpty ? L.logPlaceholder(appLanguage) : runner.log)
-                                    .font(.system(.caption, design: .monospaced))
+                                                                        .font(.system(.caption, design: .monospaced))
                                     .foregroundColor(runner.log.isEmpty ? .secondary : .green)
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -118,6 +123,7 @@ struct ContentView: View {
                 }
                 .padding(10)
                 .environmentObject(runner)
+                .animation(.easeInOut(duration: 0.2), value: runner.isRunning)
                 .onChange(of: showLogPanel) { _, _ in
                     isLogPanelExpanded = false
                 }
