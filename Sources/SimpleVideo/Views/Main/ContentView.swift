@@ -25,7 +25,6 @@ struct ContentView: View {
         case .concat:       ConcatView(session: concatSession)
         case .split:        SplitByTimestampsView()
         case .convert:      ConvertView()
-        case .convertAudio: ConvertAudioView()
         case .transcribe:   TranscribeView()
         case .cutRange:     CutRangeView()
         case .settings:     SettingsView()

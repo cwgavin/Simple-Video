@@ -9,8 +9,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
     case concat = "Concatenate"
     case split = "Split by Timestamps"
     case cutRange = "Remove Time Range"
-    case convert = "Convert Video"
-    case convertAudio = "Convert Audio"
+    case convert = "Convert"
     case transcribe = "Transcribe"
     case settings = "Settings"
 
@@ -28,8 +27,7 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
             case .split:        return "按时间戳分割"
             case .cutRange:     return "移除时间段"
             case .crop:         return "裁剪视频"
-            case .convert:      return "转换视频"
-            case .convertAudio: return "转换音频"
+            case .convert:      return "转换格式"
             case .transcribe:   return "语音转文字"
             case .settings:     return "设置"
             }
@@ -45,7 +43,6 @@ enum FFTask: String, CaseIterable, Identifiable, Hashable {
         case .cutRange:      return "timeline.selection"
         case .crop:          return "crop"
         case .convert:       return "arrow.triangle.2.circlepath"
-        case .convertAudio:  return "waveform"
         case .transcribe:    return "text.bubble"
         case .settings:      return "gearshape"
         }
