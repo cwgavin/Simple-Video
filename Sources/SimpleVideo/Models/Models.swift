@@ -69,6 +69,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 
 enum AppStorageKey {
     static let showLogPanel = "showLogPanel"
+    static let iconOnlyButtons = "iconOnlyButtons"
 }
 
 enum L {

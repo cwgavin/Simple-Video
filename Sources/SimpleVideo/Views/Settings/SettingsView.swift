@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
     @AppStorage(AppStorageKey.showLogPanel) private var showLogPanel = false
+    @AppStorage(AppStorageKey.iconOnlyButtons) private var iconOnlyButtons = false
 
     private var language: AppLanguage {
         AppLanguage(rawValue: appLanguageRaw) ?? .english
@@ -42,6 +43,13 @@ struct SettingsView: View {
                         Text(language == .english ? "Log panel:" : "日志面板：")
                             .frame(width: formLabelWidth, alignment: .trailing)
                         Toggle("", isOn: $showLogPanel)
+                            .toggleStyle(.switch)
+                            .pointingHandCursor()
+                    }
+                    HStack(alignment: .top) {
+                        Text(language == .english ? "Icon-only buttons:" : "仅图标按钮：")
+                            .frame(width: formLabelWidth, alignment: .trailing)
+                        Toggle("", isOn: $iconOnlyButtons)
                             .toggleStyle(.switch)
                             .pointingHandCursor()
                     }

@@ -78,7 +78,7 @@ struct ContentView: View {
                             Button {
                                 isLogPanelExpanded.toggle()
                             } label: {
-                                Label(
+                                IconButtonLabel(
                                     isLogPanelExpanded
                                     ? L.text(appLanguage, "Hide log", "隐藏日志")
                                     : L.text(appLanguage, "Show log", "显示日志"),
@@ -93,7 +93,7 @@ struct ContentView: View {
                                 runner.progress = 0
                                 runner.status = L.text(appLanguage, "Idle", "空闲")
                             } label: {
-                                Label(L.clearLog(appLanguage), systemImage: "trash")
+                                IconButtonLabel(L.clearLog(appLanguage), systemImage: "trash")
                             }
                                 .disabled(runner.log.isEmpty)
                                 .pointingHandCursor()

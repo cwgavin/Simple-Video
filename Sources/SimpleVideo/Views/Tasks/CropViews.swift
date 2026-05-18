@@ -238,14 +238,14 @@ struct CropVideoView: View {
                         Button {
                             detectBlackBars()
                         } label: {
-                            Label(L.text(language, "Auto detect black bars", "自动检测黑边"), systemImage: "wand.and.stars")
+                            IconButtonLabel(L.text(language, "Auto detect black bars", "自动检测黑边"), systemImage: "wand.and.stars")
                         }
                         .disabled(session.input.isEmpty || previewImage == nil || isLoadingPreview || isDetectingBlackBars || runner.isRunning)
                         .pointingHandCursor(enabled: !session.input.isEmpty && previewImage != nil && !isLoadingPreview && !isDetectingBlackBars && !runner.isRunning)
                         Button {
                             showingLargeEditor = true
                         } label: {
-                            Label(L.text(language, "Full-screen crop", "全屏裁剪"), systemImage: "arrow.up.left.and.arrow.down.right")
+                            IconButtonLabel(L.text(language, "Full-screen crop", "全屏裁剪"), systemImage: "arrow.up.left.and.arrow.down.right")
                         }
                         .disabled(previewImage == nil)
                         .pointingHandCursor(enabled: previewImage != nil)
@@ -428,7 +428,7 @@ struct CropVideoView: View {
                         Button {
                             toggleTrimPreview()
                         } label: {
-                            Label(
+                            IconButtonLabel(
                                 trimPreviewButtonTitle,
                                 systemImage: trimPreviewButtonSymbol
                             )
@@ -437,7 +437,7 @@ struct CropVideoView: View {
                         Button {
                             stopTrimPreview()
                         } label: {
-                            Label(L.text(language, "Stop preview", "停止预览"), systemImage: "stop.fill")
+                            IconButtonLabel(L.text(language, "Stop preview", "停止预览"), systemImage: "stop.fill")
                         }
                         .disabled(!canStopTrimPreview)
                         .pointingHandCursor(enabled: canStopTrimPreview)
@@ -473,7 +473,7 @@ struct CropVideoView: View {
                         Button {
                             nudgeSelectedTrimHandle(byFrames: -1)
                         } label: {
-                            Label(L.text(language, "Previous frame", "前一帧"), systemImage: "chevron.left")
+                            IconButtonLabel(L.text(language, "Previous frame", "前一帧"), systemImage: "chevron.left")
                         }
                         .buttonRepeatBehavior(.enabled)
                         .disabled(trimFrameDuration == nil)
@@ -482,7 +482,7 @@ struct CropVideoView: View {
                         Button {
                             nudgeSelectedTrimHandle(byFrames: 1)
                         } label: {
-                            Label(L.text(language, "Next frame", "后一帧"), systemImage: "chevron.right")
+                            IconButtonLabel(L.text(language, "Next frame", "后一帧"), systemImage: "chevron.right")
                         }
                         .buttonRepeatBehavior(.enabled)
                         .disabled(trimFrameDuration == nil)

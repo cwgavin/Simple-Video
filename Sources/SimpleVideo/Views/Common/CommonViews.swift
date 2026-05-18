@@ -322,7 +322,7 @@ struct RunButton: View {
         HStack {
             Spacer()
             Button(action: action) {
-                Label(L.text(language, "Run", "运行"), systemImage: "play.fill")
+                IconButtonLabel(L.text(language, "Run", "运行"), systemImage: "play.fill")
                     .frame(minWidth: 100)
             }
             .keyboardShortcut(.return, modifiers: [.command])
@@ -330,5 +330,25 @@ struct RunButton: View {
             .buttonStyle(.borderedProminent)
             .pointingHandCursor(enabled: canRun && !runner.isRunning)
         }.padding(.top, 6)
+    }
+}
+
+struct IconButtonLabel: View {
+    @AppStorage(AppStorageKey.iconOnlyButtons) private var iconOnlyButtons = false
+    let title: String
+    let systemImage: String
+
+    init(_ title: String, systemImage: String) {
+        self.title = title
+        self.systemImage = systemImage
+    }
+
+    var body: some View {
+        if iconOnlyButtons {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.iconOnly)
+        } else {
+            Label(title, systemImage: systemImage)
+        }
     }
 }

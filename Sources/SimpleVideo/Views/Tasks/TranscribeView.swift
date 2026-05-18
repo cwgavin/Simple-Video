@@ -81,7 +81,7 @@ struct TranscribeView: View {
                         if !selectedDownloadedModelURLs.isEmpty {
                             HStack(spacing: 8) {
                                 Button(role: .destructive, action: deleteSelectedModel) {
-                                    Label(L.text(appLanguage, "Delete \(selectedModel.displayName)", "删除 \(modelDisplayName(selectedModel))"), systemImage: "trash")
+                                    IconButtonLabel(L.text(appLanguage, "Delete \(selectedModel.displayName)", "删除 \(modelDisplayName(selectedModel))"), systemImage: "trash")
                                 }
                                 .disabled(isDownloadingModel || isTranscribing || runner.isRunning)
                                 .pointingHandCursor()
@@ -105,10 +105,12 @@ struct TranscribeView: View {
                             .foregroundColor(.secondary)
                             .font(.caption)
                         Button(action: downloadSelectedModel) {
-                            Label(isDownloadingModel
-                                  ? L.text(appLanguage, "Downloading \(selectedModel.displayName)…", "正在下载 \(modelDisplayName(selectedModel))…")
-                                  : L.text(appLanguage, "Download \(selectedModel.displayName)", "下载 \(modelDisplayName(selectedModel))"),
-                                  systemImage: "arrow.down.circle")
+                            IconButtonLabel(
+                                isDownloadingModel
+                                ? L.text(appLanguage, "Downloading \(selectedModel.displayName)…", "正在下载 \(modelDisplayName(selectedModel))…")
+                                : L.text(appLanguage, "Download \(selectedModel.displayName)", "下载 \(modelDisplayName(selectedModel))"),
+                                systemImage: "arrow.down.circle"
+                            )
                         }
                         .pointingHandCursor()
                         .disabled(isDownloadingModel || runner.isRunning)
@@ -136,7 +138,7 @@ struct TranscribeView: View {
             HStack {
                 Spacer()
                 Button(action: transcribe) {
-                    Label(L.text(appLanguage, "Transcribe", "转写"), systemImage: "text.bubble")
+                    IconButtonLabel(L.text(appLanguage, "Transcribe", "转写"), systemImage: "text.bubble")
                         .frame(minWidth: 100)
                 }
                 .keyboardShortcut(.return, modifiers: [.command])
@@ -153,7 +155,7 @@ struct TranscribeView: View {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(transcript, forType: .string)
                         } label: {
-                            Label(L.text(appLanguage, "Copy", "复制"), systemImage: "doc.on.doc")
+                            IconButtonLabel(L.text(appLanguage, "Copy", "复制"), systemImage: "doc.on.doc")
                         }
                     }
                     ScrollView {

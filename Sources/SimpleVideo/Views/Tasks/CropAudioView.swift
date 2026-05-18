@@ -297,14 +297,14 @@ struct CropAudioView: View {
                         Button {
                             toggleTrimPreview()
                         } label: {
-                            Label(trimPreviewButtonTitle, systemImage: trimPreviewButtonSymbol)
+                            IconButtonLabel(trimPreviewButtonTitle, systemImage: trimPreviewButtonSymbol)
                         }
                         .pointingHandCursor()
 
                         Button {
                             stopTrimPreview()
                         } label: {
-                            Label(L.text(language, "Stop preview", "停止预览"), systemImage: "stop.fill")
+                            IconButtonLabel(L.text(language, "Stop preview", "停止预览"), systemImage: "stop.fill")
                         }
                         .disabled(!canStopTrimPreview)
                         .pointingHandCursor(enabled: canStopTrimPreview)
@@ -341,7 +341,7 @@ struct CropAudioView: View {
                             Button {
                                 nudgeSelectedTrimHandle(bySteps: -1)
                             } label: {
-                                Label(L.text(language, "Previous step", "前一步"), systemImage: "chevron.left")
+                                IconButtonLabel(L.text(language, "Previous step", "前一步"), systemImage: "chevron.left")
                             }
                             .buttonRepeatBehavior(.enabled)
                             .pointingHandCursor()
@@ -349,7 +349,7 @@ struct CropAudioView: View {
                             Button {
                                 nudgeSelectedTrimHandle(bySteps: 1)
                             } label: {
-                                Label(L.text(language, "Next step", "后一步"), systemImage: "chevron.right")
+                                IconButtonLabel(L.text(language, "Next step", "后一步"), systemImage: "chevron.right")
                             }
                             .buttonRepeatBehavior(.enabled)
                             .pointingHandCursor()
