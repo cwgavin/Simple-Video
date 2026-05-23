@@ -28,27 +28,17 @@ extension CropVideoView {
         }
 
         let normalizedAspect = pixelAspectRatio / (previewPixelSize.width / previewPixelSize.height)
-        var width = min(rect.width, 0.96)
+        var width: CGFloat = 1.0
         var height = width / normalizedAspect
 
-        if height > 0.96 {
-            height = min(rect.height, 0.96)
+        if height > 1.0 {
+            height = 1.0
             width = height * normalizedAspect
         }
 
-        if width > 0.96 {
-            width = 0.96
-            height = width / normalizedAspect
-        }
-        if height > 0.96 {
-            height = 0.96
-            width = height * normalizedAspect
-        }
-
-        let center = CGPoint(x: rect.midX, y: rect.midY)
         return clampCropRect(CGRect(
-            x: center.x - width / 2,
-            y: center.y - height / 2,
+            x: 0.5 - width / 2,
+            y: 0.5 - height / 2,
             width: width,
             height: height
         ))
