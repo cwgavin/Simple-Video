@@ -298,20 +298,6 @@ struct CropVideoView: View {
         VStack(alignment: .leading, spacing: 12) {
             FilePickerRow(label: L.text(language, "Input video:", "输入视频："), path: inputBinding, contentTypes: [.movie, .video, .audiovisualContent])
 
-            HStack {
-                Text(L.text(language, "Aspect ratio:", "裁剪比例："))
-                    .frame(width: formLabelWidth, alignment: .trailing)
-                Picker("aspect-ratio", selection: selectedAspectRatioBinding) {
-                    ForEach(aspectRatioOptions) { option in
-                        Text(option.title(language: language)).tag(option.id)
-                    }
-                }
-                .labelsHidden()
-                .fixedSize()
-                .pointingHandCursor()
-                Spacer()
-            }
-
             HStack(alignment: .top) {
                 Text(L.text(language, "Crop area:", "裁剪区域："))
                     .frame(width: formLabelWidth, alignment: .trailing)
@@ -406,6 +392,15 @@ struct CropVideoView: View {
                         }
                         .disabled(previewImage == nil || isDetectingBlackBars)
                         .pointingHandCursor(enabled: previewImage != nil && !isDetectingBlackBars)
+                        Picker("aspect-ratio", selection: selectedAspectRatioBinding) {
+                            ForEach(aspectRatioOptions) { option in
+                                Text(option.title(language: language)).tag(option.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        .disabled(session.input.isEmpty)
+                        .pointingHandCursor(enabled: !session.input.isEmpty)
                     }
                     if isDetectingBlackBars {
                         ProgressView(L.text(language, "Detecting black bars…", "正在检测黑边…"))
