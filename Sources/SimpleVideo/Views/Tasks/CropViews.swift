@@ -738,6 +738,7 @@ struct CropVideoView: View {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .frame(width: 18)
                 }
+                .keyboardShortcut(.space, modifiers: [])
                 .disabled(playbackDuration <= 0)
                 .pointingHandCursor(enabled: !playbackControlsDisabled)
 
