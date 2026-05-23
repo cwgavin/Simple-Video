@@ -477,12 +477,12 @@ struct CropVideoView: View {
                     )
 
                     HStack {
-                        Button(L.text(language, "Set start to playhead", "设为当前开始")) {
+                        Button(L.text(language, "Set S to playhead", "设为当前开始")) {
                             setTrimStart(playbackTime)
                         }
                         .keyboardShortcut("[", modifiers: .command)
                         .pointingHandCursor()
-                        Button(L.text(language, "Set end to playhead", "设为当前结束")) {
+                        Button(L.text(language, "Set E to playhead", "设为当前结束")) {
                             setTrimEnd(playbackTime)
                         }
                         .keyboardShortcut("]", modifiers: .command)
