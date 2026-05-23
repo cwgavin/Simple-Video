@@ -3,11 +3,19 @@ import AppKit
 import UniformTypeIdentifiers
 import AVFoundation
 
+enum CropVideoPresentation {
+    case embedded
+    case standaloneEditor
+}
+
 struct CropVideoView: View {
     let isActive: Bool
+    let presentation: CropVideoPresentation
 
     @EnvironmentObject var runner: FFmpegRunner
     @EnvironmentObject private var session: CropVideoSession
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
     @State private var previewImage: NSImage?
     @State private var previewPixelSize: CGSize = .zero
@@ -20,7 +28,6 @@ struct CropVideoView: View {
     @State private var isPlaying = false
     @State private var isPreviewingTrim = false
     @State private var isTrimPreviewPaused = false
-    @State private var showingLargeEditor = false
     @State private var playbackTimeObserver: Any?
     @State private var trimFrameDuration: Double?
     @State private var previewPlaybackMode: CropPreviewPlaybackMode = .original
@@ -144,7 +151,142 @@ struct CropVideoView: View {
         )
     }
 
+    private struct WindowFullscreenActivator: NSViewRepresentable {
+        let activationID: UInt
+
+        final class Coordinator {
+            var lastActivatedID: UInt?
+        }
+
+        func makeCoordinator() -> Coordinator {
+            Coordinator()
+        }
+
+        func makeNSView(context: Context) -> NSView {
+            let view = NSView()
+            DispatchQueue.main.async {
+                activateWindow(from: view, coordinator: context.coordinator)
+            }
+            return view
+        }
+
+        func updateNSView(_ nsView: NSView, context: Context) {
+            DispatchQueue.main.async {
+                activateWindow(from: nsView, coordinator: context.coordinator)
+            }
+        }
+
+        private func activateWindow(from view: NSView, coordinator: Coordinator) {
+            guard coordinator.lastActivatedID != activationID, let window = view.window else { return }
+            coordinator.lastActivatedID = activationID
+            window.collectionBehavior.insert(.fullScreenPrimary)
+            if !window.styleMask.contains(.fullScreen) {
+                window.toggleFullScreen(nil)
+            }
+        }
+    }
+
+    private var standaloneEditorBody: some View {
+        GeometryReader { geo in
+            let editorMinHeight = max(620, geo.size.height - 120)
+
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text(L.text(language, "Crop area", "裁剪区域"))
+                            .font(.headline)
+                        Spacer()
+                        Button(L.text(language, "Done", "完成")) {
+                            dismiss()
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .pointingHandCursor()
+                    }
+                    CropEditorView(
+                        image: previewImage,
+                        player: player,
+                        imagePixelSize: previewPixelSize,
+                        fixedAspectRatio: selectedAspectRatioOption.ratio,
+                        cropRect: cropRectBinding
+                    )
+                    .frame(maxWidth: .infinity, minHeight: editorMinHeight)
+                    playbackControls
+                    trimControls
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(minHeight: geo.size.height, alignment: .topLeading)
+                .padding()
+                .padding(.trailing, 8)
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(WindowFullscreenActivator(activationID: session.standaloneEditorActivationID))
+        }
+    }
+
     var body: some View {
+        Group {
+            if presentation == .standaloneEditor {
+                standaloneEditorBody
+            } else {
+                embeddedBody
+            }
+        }
+        .onAppear {
+            if isActive, !session.input.isEmpty, player == nil {
+                startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0, preservePlaybackState: true)
+            }
+            if isActive, !session.input.isEmpty, previewImage == nil, !isLoadingPreview {
+                loadPreview(for: session.input)
+            }
+        }
+        .onDisappear {
+            if presentation == .standaloneEditor {
+                session.isShowingStandaloneEditor = false
+            }
+            session.previewPlaybackTime = playbackTime
+            cleanupPreviewSession()
+        }
+        .onChange(of: isActive) { _, active in
+                if active {
+                if !session.input.isEmpty, player == nil {
+                    startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0, preservePlaybackState: true)
+                }
+                if !session.input.isEmpty, previewImage == nil, !isLoadingPreview {
+                    loadPreview(for: session.input)
+                }
+            } else {
+                session.previewPlaybackTime = playbackTime
+                cleanupPreviewSession()
+            }
+        }
+        .onChange(of: session.input) { _, newValue in
+            session.clearPendingChangesBaseline()
+            session.completedOutput = ""
+            session.previewPlaybackTime = 0
+            previewImage = nil
+            previewPixelSize = .zero
+            session.resetCropSelection()
+            previewError = ""
+            isDetectingBlackBars = false
+            if isActive {
+                startPreviewSession(for: newValue, resetTrimRange: true)
+            } else {
+                cleanupPreviewSession(resetState: true, resetTrimRange: true)
+            }
+            if isActive, !newValue.isEmpty {
+                loadPreview(for: newValue)
+            }
+        }
+        .onChange(of: session.selectedAspectRatio) { _, _ in
+            session.cropRect = adjustedCropRect(session.cropRect, for: selectedAspectRatioOption.ratio)
+        }
+        .onChange(of: playbackTime) { _, newValue in
+            session.previewPlaybackTime = max(newValue, 0)
+        }
+    }
+
+    private var embeddedBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             FilePickerRow(label: L.text(language, "Input video:", "输入视频："), path: inputBinding, contentTypes: [.movie, .video, .audiovisualContent])
 
@@ -243,7 +385,9 @@ struct CropVideoView: View {
                         .disabled(session.input.isEmpty || previewImage == nil || isLoadingPreview || isDetectingBlackBars || runner.isRunning)
                         .pointingHandCursor(enabled: !session.input.isEmpty && previewImage != nil && !isLoadingPreview && !isDetectingBlackBars && !runner.isRunning)
                         Button {
-                            showingLargeEditor = true
+                            session.standaloneEditorActivationID &+= 1
+                            session.isShowingStandaloneEditor = true
+                            openWindow(id: "fullscreen-crop")
                         } label: {
                             IconButtonLabel(L.text(language, "Full-screen crop", "全屏裁剪"), systemImage: "arrow.up.left.and.arrow.down.right")
                         }
@@ -283,84 +427,6 @@ struct CropVideoView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding()
         .padding(.trailing, 8)
-        .sheet(isPresented: $showingLargeEditor) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text(L.text(language, "Crop area", "裁剪区域"))
-                        .font(.headline)
-                    Spacer()
-                    Button(L.text(language, "Done", "完成")) {
-                        showingLargeEditor = false
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .pointingHandCursor()
-                }
-                CropEditorView(
-                    image: previewImage,
-                    player: player,
-                    imagePixelSize: previewPixelSize,
-                    fixedAspectRatio: selectedAspectRatioOption.ratio,
-                    cropRect: cropRectBinding
-                )
-                .frame(minWidth: 1000, minHeight: 620)
-                playbackControls
-                trimControls
-            }
-            .padding()
-            .padding(.trailing, 8)
-            .frame(minWidth: 1080, minHeight: 740)
-        }
-        .onAppear {
-            if isActive, !session.input.isEmpty, player == nil {
-                startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0, preservePlaybackState: true)
-            }
-            if isActive, !session.input.isEmpty, previewImage == nil, !isLoadingPreview {
-                loadPreview(for: session.input)
-            }
-        }
-        .onDisappear {
-            session.previewPlaybackTime = playbackTime
-            cleanupPreviewSession()
-        }
-        .onChange(of: isActive) { _, active in
-                if active {
-                if !session.input.isEmpty, player == nil {
-                    startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0, preservePlaybackState: true)
-                }
-                if !session.input.isEmpty, previewImage == nil, !isLoadingPreview {
-                    loadPreview(for: session.input)
-                }
-            } else {
-                showingLargeEditor = false
-                session.previewPlaybackTime = playbackTime
-                cleanupPreviewSession()
-            }
-        }
-        .onChange(of: session.input) { _, newValue in
-            session.clearPendingChangesBaseline()
-            session.completedOutput = ""
-            session.previewPlaybackTime = 0
-            previewImage = nil
-            previewPixelSize = .zero
-            session.resetCropSelection()
-            previewError = ""
-            isDetectingBlackBars = false
-            showingLargeEditor = false
-            if isActive {
-                startPreviewSession(for: newValue, resetTrimRange: true)
-            } else {
-                cleanupPreviewSession(resetState: true, resetTrimRange: true)
-            }
-            if isActive, !newValue.isEmpty {
-                loadPreview(for: newValue)
-            }
-        }
-        .onChange(of: session.selectedAspectRatio) { _, _ in
-            session.cropRect = adjustedCropRect(session.cropRect, for: selectedAspectRatioOption.ratio)
-        }
-        .onChange(of: playbackTime) { _, newValue in
-            session.previewPlaybackTime = max(newValue, 0)
-        }
     }
 
     @ViewBuilder

@@ -55,12 +55,13 @@ final class SimpleVideoAppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct SimpleVideoApp: App {
     @NSApplicationDelegateAdaptor(SimpleVideoAppDelegate.self) private var appDelegate
+    @StateObject private var runner = FFmpegRunner()
     @StateObject private var cropSession = CropVideoSession()
     @StateObject private var cropAudioSession = CropAudioSession()
 
     var body: some Scene {
         WindowGroup("Simple Video") {
-            ContentView(cropSession: cropSession, cropAudioSession: cropAudioSession)
+            ContentView(runner: runner, cropSession: cropSession, cropAudioSession: cropAudioSession)
                 .frame(minWidth: 920, minHeight: 580)
                 .onAppear {
                     appDelegate.cropSession = cropSession
@@ -68,5 +69,13 @@ struct SimpleVideoApp: App {
                 }
         }
         .windowResizability(.contentMinSize)
+
+        Window("Full-screen Crop", id: "fullscreen-crop") {
+            CropVideoView(isActive: true, presentation: .standaloneEditor)
+                .environmentObject(runner)
+                .environmentObject(cropSession)
+                .frame(minWidth: 1200, minHeight: 800)
+        }
+        .defaultSize(width: 1440, height: 960)
     }
 }

@@ -3,7 +3,7 @@ import SwiftUI
 // MARK: - Main view
 
 struct ContentView: View {
-    @StateObject private var runner = FFmpegRunner()
+    @ObservedObject var runner: FFmpegRunner
     @StateObject private var concatSession = ConcatSession()
     let cropSession: CropVideoSession
     let cropAudioSession: CropAudioSession
@@ -19,7 +19,7 @@ struct ContentView: View {
     @ViewBuilder
     private func detail(for task: FFTask, isActive: Bool = true) -> some View {
         switch task {
-        case .crop:         CropVideoView(isActive: isActive)
+        case .crop:         CropVideoView(isActive: isActive, presentation: .embedded)
         case .cropAudio:    CropAudioView(isActive: isActive)
         case .mergeAV:      MergeAVView()
         case .concat:       ConcatView(session: concatSession)
@@ -45,7 +45,7 @@ struct ContentView: View {
                     if let sel = selection {
                         GeometryReader { geo in
                             ScrollView {
-                                detail(for: sel)
+                                detail(for: sel, isActive: sel != .crop || !cropSession.isShowingStandaloneEditor)
                                     .frame(minHeight: geo.size.height)
                             }
                         }

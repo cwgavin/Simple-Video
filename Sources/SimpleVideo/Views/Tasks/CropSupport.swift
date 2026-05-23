@@ -160,6 +160,8 @@ final class CropVideoSession: ObservableObject {
     @Published var selectedTrimHandle: TrimHandleSelection = .start
     @Published var exportQuality = CropExportQualityOption.balanced
     @Published var exportPlaybackRate = CropPlaybackRateOption.normal
+    @Published var isShowingStandaloneEditor = false
+    @Published var standaloneEditorActivationID: UInt = 0
     private var baselineState: BaselineState?
 
     var hasPendingChanges: Bool {
