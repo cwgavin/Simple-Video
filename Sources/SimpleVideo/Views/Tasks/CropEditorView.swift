@@ -4,6 +4,17 @@ import AVFoundation
 
 private enum CropHandle {
     case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
+
+    var size: CGSize {
+        switch self {
+        case .topLeft, .topRight, .bottomRight, .bottomLeft:
+            return CGSize(width: 14, height: 14)
+        case .top, .bottom:
+            return CGSize(width: 32, height: 8)
+        case .left, .right:
+            return CGSize(width: 8, height: 32)
+        }
+    }
 }
 
 private final class CropPlayerPreviewNSView: NSView {
@@ -52,6 +63,91 @@ private struct CropPlayerPreviewView: NSViewRepresentable {
     }
 }
 
+private final class CropCursorTrackingNSView: NSView {
+    override var isFlipped: Bool { true }
+
+    var isDragging = false
+
+    var cursorZones: [(NSRect, NSCursor)] = [] {
+        didSet {
+            if !isDragging { refreshCursorNow() }
+        }
+    }
+
+    private var trackingArea: NSTrackingArea?
+
+    override func hitTest(_ aPoint: NSPoint) -> NSView? { nil }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let ta = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(ta)
+        trackingArea = ta
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        applyCursor(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        applyCursor(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.arrow.set()
+    }
+
+    private func applyCursor(at point: NSPoint) {
+        for i in stride(from: cursorZones.count - 1, through: 1, by: -1) {
+            if cursorZones[i].0.contains(point) {
+                cursorZones[i].1.set()
+                return
+            }
+        }
+        if !cursorZones.isEmpty, cursorZones[0].0.contains(point) {
+            cursorZones[0].1.set()
+            return
+        }
+        NSCursor.arrow.set()
+    }
+
+    func refreshCursorNow() {
+        guard let window else { return }
+        let localPoint = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        if bounds.contains(localPoint) {
+            applyCursor(at: localPoint)
+        }
+    }
+}
+
+private struct CropCursorTrackingView: NSViewRepresentable {
+    let zones: [(CGRect, NSCursor)]
+    let isDragging: Bool
+
+    func makeNSView(context: Context) -> CropCursorTrackingNSView {
+        let view = CropCursorTrackingNSView()
+        view.isDragging = isDragging
+        view.cursorZones = zones.map { ($0.0, $0.1) }
+        return view
+    }
+
+    func updateNSView(_ nsView: CropCursorTrackingNSView, context: Context) {
+        nsView.isDragging = isDragging
+        nsView.cursorZones = zones.map { ($0.0, $0.1) }
+        if !isDragging {
+            nsView.refreshCursorNow()
+        }
+    }
+}
+
 struct CropEditorView: View {
     let image: NSImage?
     let player: AVPlayer?
@@ -89,6 +185,8 @@ struct CropEditorView: View {
                 if displayRect.width > 0, displayRect.height > 0 {
                     overlayMask(displayRect: displayRect)
                     cropBox(displayRect: displayRect)
+                    CropCursorTrackingView(zones: cursorZones(displayRect: displayRect), isDragging: dragStart != nil || resizeStart != nil)
+                        .allowsHitTesting(false)
                 }
             }
         }
@@ -160,23 +258,132 @@ struct CropEditorView: View {
             .gesture(resizeGesture(handle, displayRect: displayRect))
     }
 
+    private func cursorZones(displayRect: CGRect) -> [(CGRect, NSCursor)] {
+        let crop = displayedCropRect(in: displayRect)
+        var zones: [(CGRect, NSCursor)] = []
+
+        let handles: [(CropHandle, CGPoint)] = [
+            (.topLeft,     CGPoint(x: crop.minX, y: crop.minY)),
+            (.top,         CGPoint(x: crop.midX, y: crop.minY)),
+            (.topRight,    CGPoint(x: crop.maxX, y: crop.minY)),
+            (.right,       CGPoint(x: crop.maxX, y: crop.midY)),
+            (.bottomRight, CGPoint(x: crop.maxX, y: crop.maxY)),
+            (.bottom,      CGPoint(x: crop.midX, y: crop.maxY)),
+            (.bottomLeft,  CGPoint(x: crop.minX, y: crop.maxY)),
+            (.left,        CGPoint(x: crop.minX, y: crop.midY)),
+        ]
+        for (h, pt) in handles {
+            let size = h.size
+            let rect = CGRect(
+                x: pt.x - size.width / 2,
+                y: pt.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+            zones.append((rect, Self.cursor(for: h)))
+        }
+
+        zones.insert((crop, .openHand), at: 0)
+
+        return zones
+    }
+
+    private static func cursor(for handle: CropHandle) -> NSCursor {
+        switch handle {
+        case .top, .bottom:
+            return .resizeUpDown
+        case .left, .right:
+            return .resizeLeftRight
+        case .topLeft, .bottomRight:
+            return nwseResizeCursor
+        case .topRight, .bottomLeft:
+            return neswResizeCursor
+        }
+    }
+
+    private static let nwseResizeCursor: NSCursor = systemCursor("_windowResizeNorthWestSouthEastCursor") ?? makeDiagonalCursor(nwse: true)
+    private static let neswResizeCursor: NSCursor = systemCursor("_windowResizeNorthEastSouthWestCursor") ?? makeDiagonalCursor(nwse: false)
+
+    private static func systemCursor(_ selectorName: String) -> NSCursor? {
+        guard let result = NSCursor.perform(NSSelectorFromString(selectorName)) else { return nil }
+        return result.takeUnretainedValue() as? NSCursor
+    }
+
+    private static func makeDiagonalCursor(nwse: Bool) -> NSCursor {
+        let size: CGFloat = 17
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            let path = NSBezierPath()
+            let margin: CGFloat = 2
+            let arrowLen: CGFloat = 4.5
+
+            let start: NSPoint
+            let end: NSPoint
+            if nwse {
+                start = NSPoint(x: margin, y: rect.maxY - margin)
+                end = NSPoint(x: rect.maxX - margin, y: margin)
+            } else {
+                start = NSPoint(x: rect.maxX - margin, y: rect.maxY - margin)
+                end = NSPoint(x: margin, y: margin)
+            }
+
+            path.move(to: start)
+            path.line(to: end)
+
+            let angle1 = atan2(end.y - start.y, end.x - start.x)
+            path.move(to: start)
+            path.line(to: NSPoint(
+                x: start.x + arrowLen * cos(angle1 + .pi / 5),
+                y: start.y + arrowLen * sin(angle1 + .pi / 5)
+            ))
+            path.move(to: start)
+            path.line(to: NSPoint(
+                x: start.x + arrowLen * cos(angle1 - .pi / 5),
+                y: start.y + arrowLen * sin(angle1 - .pi / 5)
+            ))
+
+            let angle2 = atan2(start.y - end.y, start.x - end.x)
+            path.move(to: end)
+            path.line(to: NSPoint(
+                x: end.x + arrowLen * cos(angle2 + .pi / 5),
+                y: end.y + arrowLen * sin(angle2 + .pi / 5)
+            ))
+            path.move(to: end)
+            path.line(to: NSPoint(
+                x: end.x + arrowLen * cos(angle2 - .pi / 5),
+                y: end.y + arrowLen * sin(angle2 - .pi / 5)
+            ))
+
+            path.lineWidth = 2.5
+            NSColor.white.setStroke()
+            path.stroke()
+
+            path.lineWidth = 1.2
+            NSColor.black.setStroke()
+            path.stroke()
+
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: size / 2, y: size / 2))
+    }
+
     @ViewBuilder
     private func handleShape(_ handle: CropHandle) -> some View {
+        let s = handle.size
         switch handle {
         case .topLeft, .topRight, .bottomRight, .bottomLeft:
             Circle()
                 .fill(Color.accentColor)
-                .frame(width: 14, height: 14)
+                .frame(width: s.width, height: s.height)
                 .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
         case .top, .bottom:
             RoundedRectangle(cornerRadius: 3)
                 .fill(Color.accentColor)
-                .frame(width: 32, height: 8)
+                .frame(width: s.width, height: s.height)
                 .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white, lineWidth: 1))
         case .left, .right:
             RoundedRectangle(cornerRadius: 3)
                 .fill(Color.accentColor)
-                .frame(width: 8, height: 32)
+                .frame(width: s.width, height: s.height)
                 .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white, lineWidth: 1))
         }
     }
