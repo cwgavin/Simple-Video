@@ -137,6 +137,13 @@ struct CropVideoView: View {
         )
     }
 
+    private var trimRangeModeBinding: Binding<CropTrimRangeMode> {
+        Binding(
+            get: { session.trimRangeMode },
+            set: { session.trimRangeMode = $0 }
+        )
+    }
+
     private var exportQualityBinding: Binding<CropExportQualityOption> {
         Binding(
             get: { session.exportQuality },
@@ -267,6 +274,7 @@ struct CropVideoView: View {
             previewImage = nil
             previewPixelSize = .zero
             session.resetCropSelection()
+            session.trimRangeMode = .exportSelection
             previewError = ""
             isDetectingBlackBars = false
             if isActive {
@@ -451,17 +459,24 @@ struct CropVideoView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
-                    Text(L.text(
-                        language,
-                        "Drag S/E to choose the exported section. Drag the white playhead to preview a frame, or preview the selected range.",
-                        "拖动 S/E 选择导出的片段，拖动白色播放头预览画面，也可以预览选中的片段。"
-                    ))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    HStack {
+                        Spacer(minLength: 0)
+                        rangeActionPicker
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                    // Text(L.text(
+                    //     language,
+                    //     "Drag S/E to choose the time range. You can export the selection or remove it from the final video.",
+                    //     "拖动 S/E 选择时间范围。你可以导出选中范围，也可以从最终视频中移除它。"
+                    // ))
+                    // .font(.caption)
+                    // .foregroundColor(.secondary)
 
                     TrimTimelineView(
                         duration: playbackDuration,
                         minimumDuration: minimumDuration,
+                        tintColor: session.trimRangeMode.timelineTint,
                         startHandleLabel: "S",
                         endHandleLabel: "E",
                         formatTime: formatPlaybackTime,
@@ -567,12 +582,27 @@ struct CropVideoView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var rangeActionPicker: some View {
+        Picker(
+            L.text(language, "Range action", "范围操作"),
+            selection: trimRangeModeBinding
+        ) {
+            ForEach(CropTrimRangeMode.allCases) { mode in
+                Text(mode.title(language: language)).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .pointingHandCursor()
+        .frame(width: 320, alignment: .trailing)
+    }
+
     private var trimRangeSummary: String {
         let duration = max(session.trimEnd - session.trimStart, 0)
         return L.text(
             language,
-            "Export: \(formatPlaybackTime(session.trimStart)) – \(formatPlaybackTime(session.trimEnd)) (\(formatPlaybackTime(duration)))",
-            "导出：\(formatPlaybackTime(session.trimStart)) – \(formatPlaybackTime(session.trimEnd))（\(formatPlaybackTime(duration))）"
+            "\(session.trimRangeMode.shortTitle(language: language)): \(formatPlaybackTime(session.trimStart)) – \(formatPlaybackTime(session.trimEnd)) (\(formatPlaybackTime(duration)))",
+            "\(session.trimRangeMode.shortTitle(language: language))：\(formatPlaybackTime(session.trimStart)) – \(formatPlaybackTime(session.trimEnd))（\(formatPlaybackTime(duration))）"
         )
     }
 
@@ -1202,6 +1232,20 @@ struct CropVideoView: View {
     private func runCrop() {
         guard let params = cropParameters else { return }
 
+        if let trimRange = selectedTrimRange, session.trimRangeMode == .removeSelection {
+            let out = makeOutputPath(input: session.input, ext: "mp4")
+            let args = removeSelectedRangeArguments(
+                trimRange: trimRange,
+                output: out,
+                cropParameters: hasVisualCrop ? params : nil
+            )
+            runner.run(args: args, inputForDuration: session.input) {
+                session.completedOutput = $0
+                session.markCurrentStateAsBaseline()
+            }
+            return
+        }
+
         if requiresVideoReencode {
             let out = makeOutputPath(input: session.input, ext: "mp4")
             if let trimRange = selectedTrimRange {
@@ -1236,6 +1280,74 @@ struct CropVideoView: View {
             session.completedOutput = $0
             session.markCurrentStateAsBaseline()
         }
+    }
+
+    private func removeSelectedRangeArguments(
+        trimRange: (start: Double, end: Double),
+        output: String,
+        cropParameters: CropParameters?
+    ) -> [String] {
+        let hasAudio = FFmpegRunner.hasAudioStream(session.input)
+        let start = trimRange.start
+        let end = trimRange.end
+
+        if start <= 0.001 {
+            var args = ["-ss", ffmpegTime(end), "-i", session.input]
+            args += reencodedOutputArguments(output: output, cropParameters: cropParameters)
+            return args
+        }
+
+        if playbackDuration > 0, end >= playbackDuration - 0.001 {
+            var args = ["-i", session.input, "-t", ffmpegTime(start)]
+            args += reencodedOutputArguments(output: output, cropParameters: cropParameters)
+            return args
+        }
+
+        var filterParts: [String] = [
+            "[0:v]split=2[v0][v1]",
+            "[v0]trim=start=0:end=\(ffmpegTime(start)),setpts=PTS-STARTPTS[v0t]",
+            "[v1]trim=start=\(ffmpegTime(end)),setpts=PTS-STARTPTS[v1t]",
+            "[v0t][v1t]concat=n=2:v=1:a=0[vbase]"
+        ]
+
+        var videoOutputLabel = "vbase"
+        var videoPostFilters: [String] = []
+        if let cropParameters {
+            videoPostFilters.append("crop=\(cropParameters.width):\(cropParameters.height):\(cropParameters.x):\(cropParameters.y)")
+        }
+        if session.exportPlaybackRate != .normal {
+            let ptsMultiplier = 1.0 / session.exportPlaybackRate.rawValue
+            videoPostFilters.append(String(format: "setpts=%.8f*PTS", ptsMultiplier))
+        }
+        if !videoPostFilters.isEmpty {
+            filterParts.append("[vbase]\(videoPostFilters.joined(separator: ","))[vout]")
+            videoOutputLabel = "vout"
+        }
+
+        var audioOutputLabel: String?
+        if hasAudio {
+            filterParts += [
+                "[0:a]asplit=2[a0][a1]",
+                "[a0]atrim=start=0:end=\(ffmpegTime(start)),asetpts=PTS-STARTPTS[a0t]",
+                "[a1]atrim=start=\(ffmpegTime(end)),asetpts=PTS-STARTPTS[a1t]",
+                "[a0t][a1t]concat=n=2:v=0:a=1[abase]"
+            ]
+
+            if session.exportPlaybackRate != .normal {
+                filterParts.append("[abase]\(audioTempoFilter(for: session.exportPlaybackRate.rawValue))[aout]")
+                audioOutputLabel = "aout"
+            } else {
+                audioOutputLabel = "abase"
+            }
+        }
+
+        var args = ["-i", session.input, "-filter_complex", filterParts.joined(separator: ";"), "-map", "[\(videoOutputLabel)]"]
+        if let audioOutputLabel {
+            args += ["-map", "[\(audioOutputLabel)]", "-c:a", "aac", "-b:a", "192k"]
+        }
+        args += session.exportQuality.videoArguments
+        args += ["-movflags", "+faststart", "-y", output]
+        return args
     }
 
     private func reencodedOutputArguments(output: String, cropParameters: CropParameters?) -> [String] {

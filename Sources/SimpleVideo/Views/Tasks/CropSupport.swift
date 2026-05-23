@@ -36,6 +36,40 @@ enum CropPlaybackRateOption: Double, CaseIterable, Identifiable {
     }
 }
 
+enum CropTrimRangeMode: String, CaseIterable, Identifiable {
+    case exportSelection
+    case removeSelection
+
+    var id: String { rawValue }
+
+    var timelineTint: Color {
+        switch self {
+        case .exportSelection:
+            return .accentColor
+        case .removeSelection:
+            return Color(nsColor: .systemRed)
+        }
+    }
+
+    func title(language: AppLanguage) -> String {
+        switch self {
+        case .exportSelection:
+            return L.text(language, "Export selection", "导出选中范围")
+        case .removeSelection:
+            return L.text(language, "Remove selection", "移除选中范围")
+        }
+    }
+
+    func shortTitle(language: AppLanguage) -> String {
+        switch self {
+        case .exportSelection:
+            return L.text(language, "Export", "导出")
+        case .removeSelection:
+            return L.text(language, "Remove", "移除")
+        }
+    }
+}
+
 enum CropPreviewArtifacts {
     private static let proxyPrefix = "simple-video-crop-proxy-"
     private static let previewPrefix = "simple-video-crop-preview-"
@@ -145,6 +179,7 @@ final class CropVideoSession: ObservableObject {
         let cropRect: CGRect
         let trimStart: Double
         let trimEnd: Double
+        let trimRangeMode: CropTrimRangeMode
     }
 
     private static let fullFrameCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
@@ -160,6 +195,7 @@ final class CropVideoSession: ObservableObject {
     @Published var selectedTrimHandle: TrimHandleSelection = .start
     @Published var exportQuality = CropExportQualityOption.balanced
     @Published var exportPlaybackRate = CropPlaybackRateOption.normal
+    @Published var trimRangeMode: CropTrimRangeMode = .exportSelection
     @Published var isShowingStandaloneEditor = false
     @Published var standaloneEditorActivationID: UInt = 0
     private var baselineState: BaselineState?
@@ -171,6 +207,7 @@ final class CropVideoSession: ObservableObject {
             || !current.cropRect.isApproximatelyEqual(to: baselineState.cropRect)
             || abs(current.trimStart - baselineState.trimStart) > Self.comparisonTolerance
             || abs(current.trimEnd - baselineState.trimEnd) > Self.comparisonTolerance
+            || current.trimRangeMode != baselineState.trimRangeMode
     }
 
     func resetCropSelection() {
@@ -195,7 +232,8 @@ final class CropVideoSession: ObservableObject {
             input: input,
             cropRect: cropRect,
             trimStart: trimStart,
-            trimEnd: trimEnd
+            trimEnd: trimEnd,
+            trimRangeMode: trimRangeMode
         )
     }
 }
@@ -205,6 +243,7 @@ final class CropAudioSession: ObservableObject {
         let input: String
         let trimStart: Double
         let trimEnd: Double
+        let trimRangeMode: CropTrimRangeMode
     }
 
     @Published var input = ""
@@ -214,6 +253,7 @@ final class CropAudioSession: ObservableObject {
     @Published var previewPlaybackTime: Double = 0
     @Published var selectedTrimHandle: TrimHandleSelection = .start
     @Published var exportPlaybackRate = CropPlaybackRateOption.normal
+    @Published var trimRangeMode: CropTrimRangeMode = .exportSelection
     private var baselineState: BaselineState?
 
     var hasPendingChanges: Bool {
@@ -222,6 +262,7 @@ final class CropAudioSession: ObservableObject {
         return current.input != baselineState.input
             || abs(current.trimStart - baselineState.trimStart) > CropVideoSession.comparisonTolerance
             || abs(current.trimEnd - baselineState.trimEnd) > CropVideoSession.comparisonTolerance
+            || current.trimRangeMode != baselineState.trimRangeMode
     }
 
     func clearPendingChangesBaseline() {
@@ -240,7 +281,8 @@ final class CropAudioSession: ObservableObject {
         BaselineState(
             input: input,
             trimStart: trimStart,
-            trimEnd: trimEnd
+            trimEnd: trimEnd,
+            trimRangeMode: trimRangeMode
         )
     }
 }

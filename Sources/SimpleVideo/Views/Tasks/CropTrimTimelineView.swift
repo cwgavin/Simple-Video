@@ -3,6 +3,7 @@ import SwiftUI
 struct TrimTimelineView: View {
     let duration: Double
     let minimumDuration: Double
+    let tintColor: Color
     let startHandleLabel: String
     let endHandleLabel: String
     let formatTime: (Double) -> String
@@ -31,7 +32,7 @@ struct TrimTimelineView: View {
                     .gesture(playheadDragGesture(width: width))
 
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.accentColor.opacity(0.35))
+                    .fill(tintColor.opacity(0.35))
                     .frame(width: max(endX - startX, 1), height: 14)
                     .offset(x: startX, y: 20)
                     .gesture(playheadDragGesture(width: width))
@@ -91,7 +92,7 @@ struct TrimTimelineView: View {
 
     private func timeHandle(label: String, isSelected: Bool) -> some View {
         RoundedRectangle(cornerRadius: 5)
-            .fill(isSelected ? Color.accentColor : Color.accentColor.opacity(0.75))
+            .fill(isSelected ? tintColor : tintColor.opacity(0.75))
             .frame(width: 18, height: 32)
             .overlay {
                 Text(label)
@@ -102,7 +103,7 @@ struct TrimTimelineView: View {
                 RoundedRectangle(cornerRadius: 5)
                     .stroke(isSelected ? Color.white : Color.white.opacity(0.7), lineWidth: isSelected ? 2 : 1)
             )
-            .shadow(color: isSelected ? Color.accentColor.opacity(0.35) : .clear, radius: 3)
+            .shadow(color: isSelected ? tintColor.opacity(0.35) : .clear, radius: 3)
     }
 
     private func startDragGesture(width: CGFloat) -> some Gesture {

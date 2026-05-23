@@ -63,6 +63,13 @@ struct CropAudioView: View {
         )
     }
 
+    private var trimRangeModeBinding: Binding<CropTrimRangeMode> {
+        Binding(
+            get: { session.trimRangeMode },
+            set: { session.trimRangeMode = $0 }
+        )
+    }
+
     private var exportPlaybackRateBinding: Binding<CropPlaybackRateOption> {
         Binding(
             get: { session.exportPlaybackRate },
@@ -74,8 +81,8 @@ struct CropAudioView: View {
         let duration = max(session.trimEnd - session.trimStart, 0)
         return L.text(
             language,
-            "Export: \(formatCropPlaybackTime(session.trimStart)) – \(formatCropPlaybackTime(session.trimEnd)) (\(formatCropPlaybackTime(duration)))",
-            "导出：\(formatCropPlaybackTime(session.trimStart)) – \(formatCropPlaybackTime(session.trimEnd))（\(formatCropPlaybackTime(duration))）"
+            "\(session.trimRangeMode.shortTitle(language: language)): \(formatCropPlaybackTime(session.trimStart)) – \(formatCropPlaybackTime(session.trimEnd)) (\(formatCropPlaybackTime(duration)))",
+            "\(session.trimRangeMode.shortTitle(language: language))：\(formatCropPlaybackTime(session.trimStart)) – \(formatCropPlaybackTime(session.trimEnd))（\(formatCropPlaybackTime(duration))）"
         )
     }
 
@@ -180,6 +187,7 @@ struct CropAudioView: View {
             session.clearPendingChangesBaseline()
             session.completedOutput = ""
             session.previewPlaybackTime = 0
+            session.trimRangeMode = .exportSelection
             playbackError = ""
             if isActive {
                 startPlaybackSession(for: newValue, resetTrimRange: true)
@@ -248,17 +256,24 @@ struct CropAudioView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
-                    Text(L.text(
-                        language,
-                        "Drag S/E to choose the exported section, or drag the playhead to preview a time.",
-                        "拖动 S/E 选择导出的片段，也可以拖动播放头预览时间点。"
-                    ))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    HStack {
+                        Spacer(minLength: 0)
+                        rangeActionPicker
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                    // Text(L.text(
+                    //     language,
+                    //     "Drag S/E to choose the time range. You can export the selection or remove it from the final audio.",
+                    //     "拖动 S/E 选择时间范围。你可以导出选中范围，也可以从最终音频中移除它。"
+                    // ))
+                    // .font(.caption)
+                    // .foregroundColor(.secondary)
 
                     TrimTimelineView(
                         duration: playbackDuration,
                         minimumDuration: minimumDuration,
+                        tintColor: session.trimRangeMode.timelineTint,
                         startHandleLabel: "S",
                         endHandleLabel: "E",
                         formatTime: formatCropPlaybackTime,
@@ -365,6 +380,21 @@ struct CropAudioView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var rangeActionPicker: some View {
+        Picker(
+            L.text(language, "Range action", "范围操作"),
+            selection: trimRangeModeBinding
+        ) {
+            ForEach(CropTrimRangeMode.allCases) { mode in
+                Text(mode.title(language: language)).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .pointingHandCursor()
+        .frame(width: 320, alignment: .trailing)
     }
 
     @ViewBuilder
@@ -732,15 +762,19 @@ struct CropAudioView: View {
 
         let args: [String]
         if needsReencode {
-            var reencodeArgs = ["-i", session.input]
-            if let trimRange = selectedTrimRange {
-                reencodeArgs += [
-                    "-ss", ffmpegTime(trimRange.start),
-                    "-t", ffmpegTime(trimRange.end - trimRange.start)
-                ]
+            if let trimRange = selectedTrimRange, session.trimRangeMode == .removeSelection {
+                args = removeSelectedRangeArguments(trimRange: trimRange, output: out)
+            } else {
+                var reencodeArgs = ["-i", session.input]
+                if let trimRange = selectedTrimRange {
+                    reencodeArgs += [
+                        "-ss", ffmpegTime(trimRange.start),
+                        "-t", ffmpegTime(trimRange.end - trimRange.start)
+                    ]
+                }
+                reencodeArgs += reencodedAudioOutputArguments(output: out)
+                args = reencodeArgs
             }
-            reencodeArgs += reencodedAudioOutputArguments(output: out)
-            args = reencodeArgs
         } else {
             args = [
                 "-i", session.input,
@@ -756,6 +790,41 @@ struct CropAudioView: View {
         }
     }
 
+    private func removeSelectedRangeArguments(trimRange: (start: Double, end: Double), output: String) -> [String] {
+        let start = trimRange.start
+        let end = trimRange.end
+
+        if start <= 0.001 {
+            var args = ["-ss", ffmpegTime(end), "-i", session.input]
+            args += reencodedAudioOutputArguments(output: output)
+            return args
+        }
+
+        if playbackDuration > 0, end >= playbackDuration - 0.001 {
+            var args = ["-i", session.input, "-t", ffmpegTime(start)]
+            args += reencodedAudioOutputArguments(output: output)
+            return args
+        }
+
+        var filterParts = [
+            "[0:a]asplit=2[a0][a1]",
+            "[a0]atrim=start=0:end=\(ffmpegTime(start)),asetpts=PTS-STARTPTS[a0t]",
+            "[a1]atrim=start=\(ffmpegTime(end)),asetpts=PTS-STARTPTS[a1t]",
+            "[a0t][a1t]concat=n=2:v=0:a=1[abase]"
+        ]
+
+        var outputLabel = "abase"
+        if session.exportPlaybackRate != .normal {
+            filterParts.append("[abase]\(cropAudioTempoFilter(for: session.exportPlaybackRate.rawValue))[aout]")
+            outputLabel = "aout"
+        }
+
+        var args = ["-i", session.input, "-filter_complex", filterParts.joined(separator: ";"), "-map", "[\(outputLabel)]"]
+        args += reencodedAudioEncodingArguments(for: output)
+        args += ["-y", output]
+        return args
+    }
+
     private func normalizedOutputExtension() -> String {
         let ext = inputExt(session.input).lowercased()
         let supported = ["mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff"]
@@ -763,12 +832,20 @@ struct CropAudioView: View {
     }
 
     private func reencodedAudioOutputArguments(output: String) -> [String] {
-        let ext = (output as NSString).pathExtension.lowercased()
         var args = ["-map", "0:a:0"]
 
         if session.exportPlaybackRate != .normal {
             args += ["-af", cropAudioTempoFilter(for: session.exportPlaybackRate.rawValue)]
         }
+
+        args += reencodedAudioEncodingArguments(for: output)
+        args += ["-y", output]
+        return args
+    }
+
+    private func reencodedAudioEncodingArguments(for output: String) -> [String] {
+        let ext = (output as NSString).pathExtension.lowercased()
+        var args: [String] = []
 
         switch ext {
         case "mp3":
@@ -790,8 +867,6 @@ struct CropAudioView: View {
         default:
             args += ["-c:a", "aac", "-b:a", "192k"]
         }
-
-        args += ["-y", output]
         return args
     }
 }
