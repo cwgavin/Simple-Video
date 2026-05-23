@@ -7,15 +7,14 @@ Built with **SwiftUI**. Powered by `ffmpeg` and `whisper.cpp` under the hood.
 
 ## Features
 
-- **Crop** a video visually with draggable crop handles, aspect-ratio presets, auto black-bar detection, and an optional start/end trim range with preview
-- **Crop** audio with previewable start/end trim selection and playback-rate export
+- **Crop** a video visually with draggable crop handles, aspect-ratio presets, auto black-bar detection, a dedicated full-screen crop editor, and previewable start/end trim ranges that can be exported or removed from the final output
+- **Crop** audio with previewable start/end trim selection, playback-rate export, and the option to export or remove the selected range
 - **Convert** video or audio between formats/codecs from one page using a Type selector (video: mp4, mov, mkv, webm, avi, flv, m4v, ts; audio: mp3, aac, wav, flac, ogg, m4a, wma, aiff, opus)
 - **Merge** separate video + audio tracks
 - **Concatenate** multiple video or audio files
 - **Split** one video into multiple clips from a list of timestamps
-- **Remove** a section between two timestamps and keep the rest as one video
 - **Transcribe** audio/video to text using Whisper
-- Language setting for English and Simplified Chinese, plus third-party license links
+- Settings for English/Simplified Chinese, log panel visibility, icon-only buttons, and third-party license links
 - Collapsible live log output, real-time progress bar, cancel running jobs
 
 ## Requirements

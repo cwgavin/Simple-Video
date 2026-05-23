@@ -26,7 +26,6 @@ struct ContentView: View {
         case .split:        SplitByTimestampsView()
         case .convert:      ConvertView()
         case .transcribe:   TranscribeView()
-        case .cutRange:     CutRangeView()
         case .settings:     SettingsView()
         }
     }
