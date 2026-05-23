@@ -7,24 +7,24 @@ struct CropAudioView: View {
     let isActive: Bool
 
     @EnvironmentObject var runner: FFmpegRunner
-    @EnvironmentObject private var session: CropAudioSession
-    @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
-    @State private var player: AVPlayer?
-    @State private var playbackTime: Double = 0
-    @State private var playbackDuration: Double = 0
-    @State private var isPlaying = false
-    @State private var isPreviewingTrim = false
-    @State private var isTrimPreviewPaused = false
-    @State private var playbackTimeObserver: Any?
-    @State private var playbackError = ""
+    @EnvironmentObject var session: CropAudioSession
+    @AppStorage("appLanguage") var appLanguageRaw = AppLanguage.english.rawValue
+    @State var player: AVPlayer?
+    @State var playbackTime: Double = 0
+    @State var playbackDuration: Double = 0
+    @State var isPlaying = false
+    @State var isPreviewingTrim = false
+    @State var isTrimPreviewPaused = false
+    @State var playbackTimeObserver: Any?
+    @State var playbackError = ""
 
-    private let fineTuneStep = 0.5
+    let fineTuneStep = 0.5
 
-    private var language: AppLanguage {
+    var language: AppLanguage {
         AppLanguage(rawValue: appLanguageRaw) ?? .english
     }
 
-    private var selectedTrimRange: (start: Double, end: Double)? {
+    var selectedTrimRange: (start: Double, end: Double)? {
         guard playbackDuration > cropMinimumTrimDuration(for: playbackDuration) else { return nil }
         let start = min(max(session.trimStart, 0), playbackDuration)
         let end = min(max(session.trimEnd, start), playbackDuration)
@@ -110,7 +110,7 @@ struct CropAudioView: View {
         playbackDuration <= 0
     }
 
-    private var playbackRate: Float {
+    var playbackRate: Float {
         Float(session.exportPlaybackRate.rawValue)
     }
 
@@ -261,14 +261,6 @@ struct CropAudioView: View {
                         rangeActionPicker
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
-
-                    // Text(L.text(
-                    //     language,
-                    //     "Drag S/E to choose the time range. You can export the selection or remove it from the final audio.",
-                    //     "拖动 S/E 选择时间范围。你可以导出选中范围，也可以从最终音频中移除它。"
-                    // ))
-                    // .font(.caption)
-                    // .foregroundColor(.secondary)
 
                     TrimTimelineView(
                         duration: playbackDuration,
@@ -426,306 +418,6 @@ struct CropAudioView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func startPlaybackSession(
-        for path: String,
-        resetTrimRange: Bool,
-        preservePlaybackState: Bool = false
-    ) {
-        setupPlayback(
-            path: path,
-            resetTrimRange: resetTrimRange,
-            preservePlaybackState: preservePlaybackState
-        )
-    }
-
-    private func setupPlayback(path: String, resetTrimRange: Bool, preservePlaybackState: Bool = false) {
-        let preservedTime = preservePlaybackState ? max(session.previewPlaybackTime, 0) : 0
-        let shouldResumePlayback = preservePlaybackState && isPlaying
-        let shouldKeepTrimPreview = preservePlaybackState && isPreviewingTrim
-        let shouldKeepTrimPreviewPaused = preservePlaybackState && isTrimPreviewPaused
-
-        cleanupPlayback(resetState: !preservePlaybackState, resetTrimRange: resetTrimRange)
-
-        guard !path.isEmpty else { return }
-
-        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
-        let item = AVPlayerItem(asset: asset)
-        let newPlayer = AVPlayer(playerItem: item)
-        newPlayer.actionAtItemEnd = .pause
-        player = newPlayer
-        playbackTime = preservedTime
-        isPreviewingTrim = shouldKeepTrimPreview
-        isTrimPreviewPaused = shouldKeepTrimPreviewPaused
-
-        playbackTimeObserver = newPlayer.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
-            queue: .main
-        ) { [weak newPlayer] time in
-            guard let observedPlayer = newPlayer else { return }
-            let currentSeconds = CMTimeGetSeconds(time)
-            if currentSeconds.isFinite {
-                playbackTime = min(max(currentSeconds, 0), max(playbackDuration, currentSeconds))
-                if isPreviewingTrim, playbackTime >= trimPreviewEnd - 0.03 {
-                    observedPlayer.pause()
-                    seek(to: trimPreviewEnd, cancelTrimPreview: false)
-                    isPlaying = false
-                    isPreviewingTrim = false
-                    isTrimPreviewPaused = false
-                    return
-                }
-            }
-            isPlaying = observedPlayer.timeControlStatus == .playing
-        }
-
-        if preservedTime > 0 {
-            newPlayer.seek(
-                to: CMTime(seconds: preservedTime, preferredTimescale: 600),
-                toleranceBefore: .zero,
-                toleranceAfter: .zero
-            ) { finished in
-                DispatchQueue.main.async {
-                    guard finished, self.player === newPlayer else { return }
-                    self.playbackTime = preservedTime
-                    if shouldResumePlayback {
-                        self.startPlayback(using: newPlayer)
-                    }
-                }
-            }
-        } else if shouldResumePlayback {
-            startPlayback(using: newPlayer)
-        }
-
-        Task {
-            do {
-                let duration = try await asset.load(.duration)
-                let durationSeconds = CMTimeGetSeconds(duration)
-                await MainActor.run {
-                    guard player === newPlayer else { return }
-                    playbackDuration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : 0
-                    if playbackDuration > 0 {
-                        if resetTrimRange || session.trimEnd <= 0 {
-                            session.trimStart = 0
-                            session.trimEnd = playbackDuration
-                        } else {
-                            clampTrimRange(to: playbackDuration)
-                        }
-                        if resetTrimRange {
-                            session.markCurrentStateAsBaseline()
-                        }
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    guard player === newPlayer else { return }
-                    playbackError = L.text(
-                        language,
-                        "Could not read audio duration.",
-                        "无法读取音频时长。"
-                    )
-                    runner.log += "WARNING: Could not read audio duration: \(error.localizedDescription)\n"
-                }
-            }
-        }
-    }
-
-    private func cleanupPlayback(resetState: Bool = false, resetTrimRange: Bool = false) {
-        if let playbackTimeObserver, let player {
-            player.removeTimeObserver(playbackTimeObserver)
-        }
-        player?.pause()
-        player?.replaceCurrentItem(with: nil)
-        player = nil
-        playbackTimeObserver = nil
-        isPlaying = false
-        isPreviewingTrim = false
-        isTrimPreviewPaused = false
-
-        if resetState {
-            playbackTime = 0
-            playbackDuration = 0
-        }
-        if resetTrimRange {
-            session.trimStart = 0
-            session.trimEnd = 0
-        }
-    }
-
-    private func togglePlayback() {
-        guard let player else { return }
-        updatePlaybackTime()
-        if isPlaying {
-            player.pause()
-            isPlaying = false
-            if isPreviewingTrim {
-                isTrimPreviewPaused = true
-            } else {
-                isPreviewingTrim = false
-            }
-        } else {
-            if isPreviewingTrim {
-                resumeTrimPreview()
-                return
-            }
-            if playbackDuration > 0, playbackTime >= playbackDuration - 0.05 {
-                seek(to: 0)
-            }
-            isPreviewingTrim = false
-            isTrimPreviewPaused = false
-            startPlayback(using: player)
-        }
-    }
-
-    private func startPlayback(using player: AVPlayer) {
-        player.playImmediately(atRate: playbackRate)
-        isPlaying = true
-    }
-
-    private func seek(to seconds: Double, cancelTrimPreview: Bool = true) {
-        let bounded = min(max(seconds, 0), max(playbackDuration, 0))
-        playbackTime = bounded
-        if cancelTrimPreview {
-            isPreviewingTrim = false
-            isTrimPreviewPaused = false
-        }
-        guard let player else { return }
-
-        player.currentItem?.cancelPendingSeeks()
-        player.seek(
-            to: CMTime(seconds: bounded, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        ) { finished in
-            guard finished else { return }
-            let actualSeconds = CMTimeGetSeconds(player.currentTime())
-            guard actualSeconds.isFinite else { return }
-            Task { @MainActor in
-                guard self.player === player else { return }
-                self.playbackTime = min(max(actualSeconds, 0), max(self.playbackDuration, actualSeconds))
-            }
-        }
-    }
-
-    private func scrubPlayback(to seconds: Double) {
-        seek(to: seconds, cancelTrimPreview: !shouldPreserveTrimPreview(whenSeekingTo: seconds))
-    }
-
-    private func shouldPreserveTrimPreview(whenSeekingTo seconds: Double) -> Bool {
-        guard isPreviewingTrim else { return false }
-
-        let start = min(max(session.trimStart, 0), playbackDuration)
-        let end = trimPreviewEnd
-        guard end > start else { return false }
-
-        let bounded = min(max(seconds, 0), max(playbackDuration, 0))
-        return bounded >= start && bounded <= end
-    }
-
-    private var trimPreviewEnd: Double {
-        guard playbackDuration > 0, session.trimEnd > 0 else { return playbackDuration }
-        return min(max(session.trimEnd, session.trimStart), playbackDuration)
-    }
-
-    private func toggleTrimPreview() {
-        if isPreviewingTrim {
-            if isTrimPreviewPaused {
-                resumeTrimPreview()
-            } else {
-                pauseTrimPreview()
-            }
-        } else {
-            startTrimPreview()
-        }
-    }
-
-    private func startTrimPreview() {
-        guard let player, playbackDuration > 0 else { return }
-        let start = min(max(session.trimStart, 0), playbackDuration)
-        let end = trimPreviewEnd
-        guard end > start else { return }
-
-        player.pause()
-        isPlaying = false
-        isPreviewingTrim = false
-        isTrimPreviewPaused = false
-        player.seek(
-            to: CMTime(seconds: start, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        ) { finished in
-            DispatchQueue.main.async {
-                guard finished, self.player === player else { return }
-                self.playbackTime = start
-                self.isPreviewingTrim = true
-                self.isTrimPreviewPaused = false
-                self.startPlayback(using: player)
-            }
-        }
-    }
-
-    private func pauseTrimPreview() {
-        guard isPreviewingTrim else { return }
-        player?.pause()
-        isPlaying = false
-        isTrimPreviewPaused = true
-    }
-
-    private func resumeTrimPreview() {
-        guard let player, isPreviewingTrim else { return }
-
-        let start = min(max(session.trimStart, 0), playbackDuration)
-        let end = trimPreviewEnd
-        guard end > start else { return }
-
-        if playbackTime < start || playbackTime >= end - 0.03 {
-            seek(to: start, cancelTrimPreview: false)
-        }
-        isTrimPreviewPaused = false
-        startPlayback(using: player)
-    }
-
-    private func stopTrimPreview() {
-        player?.pause()
-        isPlaying = false
-        isPreviewingTrim = false
-        isTrimPreviewPaused = false
-    }
-
-    private func setTrimStart(_ seconds: Double) {
-        guard playbackDuration > 0 else { return }
-        let maxStart = max(0, session.trimEnd - cropMinimumTrimDuration(for: playbackDuration))
-        session.trimStart = min(max(seconds, 0), maxStart)
-        seek(to: session.trimStart)
-    }
-
-    private func setTrimEnd(_ seconds: Double) {
-        guard playbackDuration > 0 else { return }
-        let minEnd = min(playbackDuration, session.trimStart + cropMinimumTrimDuration(for: playbackDuration))
-        session.trimEnd = min(max(seconds, minEnd), playbackDuration)
-        seek(to: session.trimEnd)
-    }
-
-    private func resetTrimRange() {
-        session.trimStart = 0
-        session.trimEnd = playbackDuration
-        seek(to: 0)
-    }
-
-    private func clampTrimRange(to duration: Double) {
-        let minimumDuration = cropMinimumTrimDuration(for: duration)
-        session.trimStart = min(max(session.trimStart, 0), max(duration - minimumDuration, 0))
-        session.trimEnd = min(max(session.trimEnd, session.trimStart + minimumDuration), duration)
-    }
-
-    private func nudgeSelectedTrimHandle(bySteps steps: Int) {
-        let offset = Double(steps) * fineTuneStep
-        switch session.selectedTrimHandle {
-        case .start:
-            setTrimStart(session.trimStart + offset)
-        case .end:
-            setTrimEnd(session.trimEnd + offset)
-        }
-    }
-
     private var audioStepSummary: String {
         return L.text(
             language,
@@ -734,139 +426,4 @@ struct CropAudioView: View {
         )
     }
 
-    private func updatePlaybackTime() {
-        guard let player else {
-            isPlaying = false
-            return
-        }
-
-        let currentSeconds = CMTimeGetSeconds(player.currentTime())
-        if currentSeconds.isFinite {
-            playbackTime = min(max(currentSeconds, 0), max(playbackDuration, currentSeconds))
-        }
-
-        isPlaying = player.timeControlStatus == .playing
-        if playbackDuration > 0, playbackTime >= playbackDuration - 0.05, player.timeControlStatus != .playing {
-            isPlaying = false
-        }
-    }
-
-    private func runCropAudio() {
-        let hasExactTrim = selectedTrimRange != nil
-        let needsReencode = hasExactTrim || session.exportPlaybackRate != .normal
-        let outputExtension = normalizedOutputExtension()
-        let out = makeOutputPath(
-            input: session.input,
-            ext: needsReencode ? outputExtension : inputExt(session.input)
-        )
-
-        let args: [String]
-        if needsReencode {
-            if let trimRange = selectedTrimRange, session.trimRangeMode == .removeSelection {
-                args = removeSelectedRangeArguments(trimRange: trimRange, output: out)
-            } else {
-                var reencodeArgs = ["-i", session.input]
-                if let trimRange = selectedTrimRange {
-                    reencodeArgs += [
-                        "-ss", ffmpegTime(trimRange.start),
-                        "-t", ffmpegTime(trimRange.end - trimRange.start)
-                    ]
-                }
-                reencodeArgs += reencodedAudioOutputArguments(output: out)
-                args = reencodeArgs
-            }
-        } else {
-            args = [
-                "-i", session.input,
-                "-map", "0:a:0",
-                "-c", "copy",
-                "-y", out
-            ]
-        }
-
-        runner.run(args: args, inputForDuration: session.input) {
-            session.completedOutput = $0
-            session.markCurrentStateAsBaseline()
-        }
-    }
-
-    private func removeSelectedRangeArguments(trimRange: (start: Double, end: Double), output: String) -> [String] {
-        let start = trimRange.start
-        let end = trimRange.end
-
-        if start <= 0.001 {
-            var args = ["-ss", ffmpegTime(end), "-i", session.input]
-            args += reencodedAudioOutputArguments(output: output)
-            return args
-        }
-
-        if playbackDuration > 0, end >= playbackDuration - 0.001 {
-            var args = ["-i", session.input, "-t", ffmpegTime(start)]
-            args += reencodedAudioOutputArguments(output: output)
-            return args
-        }
-
-        var filterParts = [
-            "[0:a]asplit=2[a0][a1]",
-            "[a0]atrim=start=0:end=\(ffmpegTime(start)),asetpts=PTS-STARTPTS[a0t]",
-            "[a1]atrim=start=\(ffmpegTime(end)),asetpts=PTS-STARTPTS[a1t]",
-            "[a0t][a1t]concat=n=2:v=0:a=1[abase]"
-        ]
-
-        var outputLabel = "abase"
-        if session.exportPlaybackRate != .normal {
-            filterParts.append("[abase]\(cropAudioTempoFilter(for: session.exportPlaybackRate.rawValue))[aout]")
-            outputLabel = "aout"
-        }
-
-        var args = ["-i", session.input, "-filter_complex", filterParts.joined(separator: ";"), "-map", "[\(outputLabel)]"]
-        args += reencodedAudioEncodingArguments(for: output)
-        args += ["-y", output]
-        return args
-    }
-
-    private func normalizedOutputExtension() -> String {
-        let ext = inputExt(session.input).lowercased()
-        let supported = ["mp3", "aac", "m4a", "flac", "wav", "ogg", "opus", "wma", "aiff"]
-        return supported.contains(ext) ? ext : "m4a"
-    }
-
-    private func reencodedAudioOutputArguments(output: String) -> [String] {
-        var args = ["-map", "0:a:0"]
-
-        if session.exportPlaybackRate != .normal {
-            args += ["-af", cropAudioTempoFilter(for: session.exportPlaybackRate.rawValue)]
-        }
-
-        args += reencodedAudioEncodingArguments(for: output)
-        args += ["-y", output]
-        return args
-    }
-
-    private func reencodedAudioEncodingArguments(for output: String) -> [String] {
-        let ext = (output as NSString).pathExtension.lowercased()
-        var args: [String] = []
-
-        switch ext {
-        case "mp3":
-            args += ["-c:a", "libmp3lame", "-b:a", "192k"]
-        case "aac", "m4a":
-            args += ["-c:a", "aac", "-b:a", "192k"]
-        case "flac":
-            args += ["-c:a", "flac"]
-        case "wav":
-            args += ["-c:a", "pcm_s16le"]
-        case "ogg":
-            args += ["-c:a", "libvorbis", "-q:a", "5"]
-        case "opus":
-            args += ["-c:a", "libopus", "-b:a", "128k"]
-        case "wma":
-            args += ["-c:a", "wmav2", "-b:a", "192k"]
-        case "aiff":
-            args += ["-c:a", "pcm_s16be"]
-        default:
-            args += ["-c:a", "aac", "-b:a", "192k"]
-        }
-        return args
-    }
 }

@@ -13,31 +13,31 @@ struct CropVideoView: View {
     let presentation: CropVideoPresentation
 
     @EnvironmentObject var runner: FFmpegRunner
-    @EnvironmentObject private var session: CropVideoSession
+    @EnvironmentObject var session: CropVideoSession
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openWindow) private var openWindow
-    @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
-    @State private var previewImage: NSImage?
-    @State private var previewPixelSize: CGSize = .zero
-    @State private var isLoadingPreview = false
-    @State private var isDetectingBlackBars = false
-    @State private var previewError = ""
-    @State private var player: AVPlayer?
-    @State private var playbackTime: Double = 0
-    @State private var playbackDuration: Double = 0
-    @State private var isPlaying = false
-    @State private var isPreviewingTrim = false
-    @State private var isTrimPreviewPaused = false
-    @State private var playbackTimeObserver: Any?
-    @State private var trimFrameDuration: Double?
-    @State private var previewPlaybackMode: CropPreviewPlaybackMode = .original
-    @State private var previewProxyPath: String?
-    @State private var isGeneratingPreviewProxy = false
-    @State private var proxyGenerationTask: Task<Void, Never>?
-    @State private var proxyGenerationProcess: Process?
-    @State private var proxyGenerationID: UInt = 0
+    @AppStorage("appLanguage") var appLanguageRaw = AppLanguage.english.rawValue
+    @State var previewImage: NSImage?
+    @State var previewPixelSize: CGSize = .zero
+    @State var isLoadingPreview = false
+    @State var isDetectingBlackBars = false
+    @State var previewError = ""
+    @State var player: AVPlayer?
+    @State var playbackTime: Double = 0
+    @State var playbackDuration: Double = 0
+    @State var isPlaying = false
+    @State var isPreviewingTrim = false
+    @State var isTrimPreviewPaused = false
+    @State var playbackTimeObserver: Any?
+    @State var trimFrameDuration: Double?
+    @State var previewPlaybackMode: CropPreviewPlaybackMode = .original
+    @State var previewProxyPath: String?
+    @State var isGeneratingPreviewProxy = false
+    @State var proxyGenerationTask: Task<Void, Never>?
+    @State var proxyGenerationProcess: Process?
+    @State var proxyGenerationID: UInt = 0
 
-    private let aspectRatioOptions = [
+    let aspectRatioOptions = [
         CropAspectRatioOption(id: "free", ratio: nil),
         CropAspectRatioOption(id: "16:9", ratio: 16.0 / 9.0),
         CropAspectRatioOption(id: "9:16", ratio: 9.0 / 16.0),
@@ -45,15 +45,15 @@ struct CropVideoView: View {
         CropAspectRatioOption(id: "4:3", ratio: 4.0 / 3.0),
     ]
 
-    private var language: AppLanguage {
+    var language: AppLanguage {
         AppLanguage(rawValue: appLanguageRaw) ?? .english
     }
 
-    private var selectedAspectRatioOption: CropAspectRatioOption {
+    var selectedAspectRatioOption: CropAspectRatioOption {
         aspectRatioOptions.first(where: { $0.id == session.selectedAspectRatio }) ?? aspectRatioOptions[0]
     }
 
-    private var selectedTrimRange: (start: Double, end: Double)? {
+    var selectedTrimRange: (start: Double, end: Double)? {
         guard playbackDuration > minimumTrimDuration(for: playbackDuration) else { return nil }
         let start = min(max(session.trimStart, 0), playbackDuration)
         let end = min(max(session.trimEnd, start), playbackDuration)
@@ -64,7 +64,7 @@ struct CropVideoView: View {
         return (start, end)
     }
 
-    private var cropParameters: CropParameters? {
+    var cropParameters: CropParameters? {
         guard previewPixelSize.width >= 2, previewPixelSize.height >= 2 else { return nil }
         let pixelWidth = Int(previewPixelSize.width.rounded(.down))
         let pixelHeight = Int(previewPixelSize.height.rounded(.down))
@@ -86,12 +86,12 @@ struct CropVideoView: View {
         previewPlaybackMode == .compatibilityProxy
     }
 
-    private var hasVisualCrop: Bool {
+    var hasVisualCrop: Bool {
         guard let params = cropParameters else { return false }
         return !isFullFrameCrop(params)
     }
 
-    private var requiresVideoReencode: Bool {
+    var requiresVideoReencode: Bool {
         hasVisualCrop || selectedTrimRange != nil || session.exportPlaybackRate != .normal
     }
 
@@ -255,7 +255,7 @@ struct CropVideoView: View {
             cleanupPreviewSession()
         }
         .onChange(of: isActive) { _, active in
-                if active {
+            if active {
                 if !session.input.isEmpty, player == nil {
                     startPreviewSession(for: session.input, resetTrimRange: session.trimEnd <= 0, preservePlaybackState: true)
                 }
@@ -465,14 +465,6 @@ struct CropVideoView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
 
-                    // Text(L.text(
-                    //     language,
-                    //     "Drag S/E to choose the time range. You can export the selection or remove it from the final video.",
-                    //     "拖动 S/E 选择时间范围。你可以导出选中范围，也可以从最终视频中移除它。"
-                    // ))
-                    // .font(.caption)
-                    // .foregroundColor(.secondary)
-
                     TrimTimelineView(
                         duration: playbackDuration,
                         minimumDuration: minimumDuration,
@@ -639,7 +631,7 @@ struct CropVideoView: View {
         isPreviewingTrim
     }
 
-    private var playbackRate: Float {
+    var playbackRate: Float {
         Float(session.exportPlaybackRate.rawValue)
     }
 
@@ -769,788 +761,9 @@ struct CropVideoView: View {
         }
     }
 
-    private func startPreviewSession(for path: String, resetTrimRange: Bool, preservePlaybackState: Bool = false) {
-        cleanupPreviewProxy()
-        setupPlayback(
-            previewPath: path,
-            metadataPath: path,
-            resetTrimRange: resetTrimRange,
-            preservePlaybackState: preservePlaybackState
-        )
-        preparePreviewProxyFallback(for: path)
-    }
-
-    private func setupPlayback(
-        previewPath: String,
-        metadataPath: String,
-        resetTrimRange: Bool,
-        preservePlaybackState: Bool = false
-    ) {
-        let preservedTime = preservePlaybackState ? max(session.previewPlaybackTime, 0) : 0
-        let shouldResumePlayback = preservePlaybackState && isPlaying
-        let shouldKeepTrimPreview = preservePlaybackState && isPreviewingTrim
-        let shouldKeepTrimPreviewPaused = preservePlaybackState && isTrimPreviewPaused
-
-        cleanupPlayback(resetState: !preservePlaybackState, resetTrimRange: resetTrimRange)
-
-        guard !previewPath.isEmpty, !metadataPath.isEmpty else {
-            return
-        }
-
-        let previewAsset = AVURLAsset(url: URL(fileURLWithPath: previewPath))
-        let item = AVPlayerItem(asset: previewAsset)
-        let newPlayer = AVPlayer(playerItem: item)
-        newPlayer.actionAtItemEnd = .pause
-        player = newPlayer
-        trimFrameDuration = nil
-        previewPlaybackMode = previewPath == metadataPath ? .original : .compatibilityProxy
-        playbackTime = preservedTime
-        isPreviewingTrim = shouldKeepTrimPreview
-        isTrimPreviewPaused = shouldKeepTrimPreviewPaused
-
-        playbackTimeObserver = newPlayer.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
-            queue: .main
-        ) { [weak newPlayer] time in
-            guard let observedPlayer = newPlayer else { return }
-            let currentSeconds = CMTimeGetSeconds(time)
-            if currentSeconds.isFinite {
-                playbackTime = min(max(currentSeconds, 0), max(playbackDuration, currentSeconds))
-                if isPreviewingTrim, playbackTime >= trimPreviewEnd - 0.03 {
-                    observedPlayer.pause()
-                    seek(to: trimPreviewEnd, cancelTrimPreview: false)
-                    isPlaying = false
-                    isPreviewingTrim = false
-                    isTrimPreviewPaused = false
-                    return
-                }
-            }
-            isPlaying = observedPlayer.timeControlStatus == .playing
-        }
-
-        if preservedTime > 0 {
-            newPlayer.seek(
-                to: CMTime(seconds: preservedTime, preferredTimescale: 600),
-                toleranceBefore: .zero,
-                toleranceAfter: .zero
-            ) { finished in
-                DispatchQueue.main.async {
-                    guard finished, self.player === newPlayer else { return }
-                    self.playbackTime = preservedTime
-                    if shouldResumePlayback {
-                        self.startPlayback(using: newPlayer)
-                    }
-                }
-            }
-        } else if shouldResumePlayback {
-            startPlayback(using: newPlayer)
-        }
-
-        Task {
-            do {
-                let metadataAsset = AVURLAsset(url: URL(fileURLWithPath: metadataPath))
-                let duration = try await metadataAsset.load(.duration)
-                let frameDuration = try await loadFrameDuration(from: metadataAsset)
-                let durationSeconds = CMTimeGetSeconds(duration)
-                await MainActor.run {
-                    guard player === newPlayer else { return }
-                    playbackDuration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : 0
-                    trimFrameDuration = frameDuration
-                    if playbackDuration > 0 {
-                        if resetTrimRange || session.trimEnd <= 0 {
-                            session.trimStart = 0
-                            session.trimEnd = playbackDuration
-                        } else {
-                            clampTrimRange(to: playbackDuration)
-                        }
-                        if resetTrimRange {
-                            session.markCurrentStateAsBaseline()
-                        }
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    guard player === newPlayer else { return }
-                    runner.log += "WARNING: Could not read video duration: \(error.localizedDescription)\n"
-                }
-            }
-        }
-    }
-
-    private func preparePreviewProxyFallback(for path: String) {
-        proxyGenerationTask?.cancel()
-        proxyGenerationTask = nil
-
-        guard !path.isEmpty else {
-            isGeneratingPreviewProxy = false
-            return
-        }
-
-        proxyGenerationID &+= 1
-        let requestID = proxyGenerationID
-
-        proxyGenerationTask = Task {
-            defer {
-                Task { @MainActor in
-                    guard proxyGenerationID == requestID else { return }
-                    proxyGenerationTask = nil
-                }
-            }
-
-            let requiresProxy = await Self.requiresPreviewProxy(path: path)
-            guard !Task.isCancelled else { return }
-
-            if !requiresProxy {
-                await MainActor.run {
-                    guard session.input == path, proxyGenerationID == requestID else { return }
-                    isGeneratingPreviewProxy = false
-                }
-                return
-            }
-
-            await MainActor.run {
-                guard session.input == path, proxyGenerationID == requestID else { return }
-                isGeneratingPreviewProxy = true
-            }
-
-            do {
-                let proxyPath = try await Self.generatePreviewProxy(path: path) { process in
-                    await MainActor.run {
-                        guard session.input == path, proxyGenerationID == requestID else {
-                            return false
-                        }
-                        proxyGenerationProcess = process
-                        return true
-                    }
-                }
-                guard !Task.isCancelled else {
-                    try? FileManager.default.removeItem(atPath: proxyPath)
-                    return
-                }
-
-                let shouldAdopt = await MainActor.run { () -> Bool in
-                    guard session.input == path, proxyGenerationID == requestID else { return false }
-                    previewProxyPath = proxyPath
-                    CropPreviewArtifacts.register(proxyPath)
-                    proxyGenerationProcess = nil
-                    isGeneratingPreviewProxy = false
-                    return true
-                }
-                guard shouldAdopt else {
-                    try? FileManager.default.removeItem(atPath: proxyPath)
-                    return
-                }
-
-                await MainActor.run {
-                    setupPlayback(
-                        previewPath: proxyPath,
-                        metadataPath: path,
-                        resetTrimRange: false,
-                        preservePlaybackState: true
-                    )
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                await MainActor.run {
-                    guard session.input == path, proxyGenerationID == requestID else { return }
-                    proxyGenerationProcess = nil
-                    isGeneratingPreviewProxy = false
-                    runner.log += "WARNING: Could not create a compatibility preview: \(error.localizedDescription)\n"
-                }
-            }
-        }
-    }
-
-    private func cleanupPlayback(resetState: Bool = false, resetTrimRange: Bool = false) {
-        if let playbackTimeObserver, let player {
-            player.removeTimeObserver(playbackTimeObserver)
-        }
-        player?.pause()
-        player?.replaceCurrentItem(with: nil)
-        player = nil
-        playbackTimeObserver = nil
-        isPlaying = false
-        isPreviewingTrim = false
-        isTrimPreviewPaused = false
-
-        if resetState {
-            playbackTime = 0
-            playbackDuration = 0
-        }
-        if resetTrimRange {
-            session.trimStart = 0
-            session.trimEnd = 0
-        }
-    }
-
-    private func cleanupPreviewProxy() {
-        proxyGenerationID &+= 1
-        proxyGenerationTask?.cancel()
-        proxyGenerationTask = nil
-
-        if let process = proxyGenerationProcess, process.isRunning {
-            process.terminate()
-        }
-        proxyGenerationProcess = nil
-
-        if let previewProxyPath {
-            CropPreviewArtifacts.unregister(previewProxyPath)
-            try? FileManager.default.removeItem(atPath: previewProxyPath)
-        }
-        previewProxyPath = nil
-        previewPlaybackMode = .original
-        isGeneratingPreviewProxy = false
-    }
-
-    private func cleanupPreviewSession(resetState: Bool = false, resetTrimRange: Bool = false) {
-        cleanupPlayback(resetState: resetState, resetTrimRange: resetTrimRange)
-        cleanupPreviewProxy()
-    }
-
-    private func togglePlayback() {
-        guard let player else { return }
-        updatePlaybackTime()
-        if isPlaying {
-            player.pause()
-            isPlaying = false
-            if isPreviewingTrim {
-                isTrimPreviewPaused = true
-            } else {
-                isPreviewingTrim = false
-            }
-        } else {
-            if isPreviewingTrim {
-                resumeTrimPreview()
-                return
-            }
-            if playbackDuration > 0, playbackTime >= playbackDuration - 0.05 {
-                seek(to: 0)
-            }
-            isPreviewingTrim = false
-            isTrimPreviewPaused = false
-            startPlayback(using: player)
-        }
-    }
-
-    private func startPlayback(using player: AVPlayer) {
-        player.playImmediately(atRate: playbackRate)
-        isPlaying = true
-    }
-
-    private func seek(to seconds: Double, cancelTrimPreview: Bool = true) {
-        let bounded = min(max(seconds, 0), max(playbackDuration, 0))
-        playbackTime = bounded
-        if cancelTrimPreview {
-            isPreviewingTrim = false
-            isTrimPreviewPaused = false
-        }
-        guard let player else { return }
-
-        // Use zero tolerance so manual scrubbing lands on the requested frame
-        // instead of snapping to the nearest sync frame.
-        player.currentItem?.cancelPendingSeeks()
-        player.seek(
-            to: CMTime(seconds: bounded, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        ) { finished in
-            guard finished else { return }
-            let actualSeconds = CMTimeGetSeconds(player.currentTime())
-            guard actualSeconds.isFinite else { return }
-            Task { @MainActor in
-                guard self.player === player else { return }
-                self.playbackTime = min(max(actualSeconds, 0), max(self.playbackDuration, actualSeconds))
-            }
-        }
-    }
-
-    private func scrubPlayback(to seconds: Double) {
-        seek(to: seconds, cancelTrimPreview: !shouldPreserveTrimPreview(whenSeekingTo: seconds))
-    }
-
-    private func shouldPreserveTrimPreview(whenSeekingTo seconds: Double) -> Bool {
-        guard isPreviewingTrim else { return false }
-
-        let start = min(max(session.trimStart, 0), playbackDuration)
-        let end = trimPreviewEnd
-        guard end > start else { return false }
-
-        let bounded = min(max(seconds, 0), max(playbackDuration, 0))
-        return bounded >= start && bounded <= end
-    }
-
-    private var trimPreviewEnd: Double {
-        guard playbackDuration > 0, session.trimEnd > 0 else { return playbackDuration }
-        return min(max(session.trimEnd, session.trimStart), playbackDuration)
-    }
-
-    private func toggleTrimPreview() {
-        if isPreviewingTrim {
-            if isTrimPreviewPaused {
-                resumeTrimPreview()
-            } else {
-                pauseTrimPreview()
-            }
-        } else {
-            startTrimPreview()
-        }
-    }
-
-    private func startTrimPreview() {
-        guard let player, playbackDuration > 0 else { return }
-        let start = min(max(session.trimStart, 0), playbackDuration)
-        let end = trimPreviewEnd
-        guard end > start else { return }
-
-        player.pause()
-        isPlaying = false
-        isPreviewingTrim = false
-        isTrimPreviewPaused = false
-        player.seek(
-            to: CMTime(seconds: start, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        ) { finished in
-            DispatchQueue.main.async {
-                guard finished, self.player === player else { return }
-                self.playbackTime = start
-                self.isPreviewingTrim = true
-                self.isTrimPreviewPaused = false
-                self.startPlayback(using: player)
-            }
-        }
-    }
-
-    private func pauseTrimPreview() {
-        guard isPreviewingTrim else { return }
-        player?.pause()
-        isPlaying = false
-        isTrimPreviewPaused = true
-    }
-
-    private func resumeTrimPreview() {
-        guard let player, isPreviewingTrim else { return }
-
-        let start = min(max(session.trimStart, 0), playbackDuration)
-        let end = trimPreviewEnd
-        guard end > start else { return }
-
-        if playbackTime < start || playbackTime >= end - 0.03 {
-            seek(to: start, cancelTrimPreview: false)
-        }
-        isTrimPreviewPaused = false
-        startPlayback(using: player)
-    }
-
-    private func stopTrimPreview() {
-        player?.pause()
-        isPlaying = false
-        isPreviewingTrim = false
-        isTrimPreviewPaused = false
-    }
-
-    private func setTrimStart(_ seconds: Double) {
-        guard playbackDuration > 0 else { return }
-        let maxStart = max(0, session.trimEnd - minimumTrimDuration(for: playbackDuration))
-        session.trimStart = min(max(seconds, 0), maxStart)
-        seek(to: session.trimStart)
-    }
-
-    private func setTrimEnd(_ seconds: Double) {
-        guard playbackDuration > 0 else { return }
-        let minEnd = min(playbackDuration, session.trimStart + minimumTrimDuration(for: playbackDuration))
-        session.trimEnd = min(max(seconds, minEnd), playbackDuration)
-        seek(to: session.trimEnd)
-    }
-
-    private func resetTrimRange() {
-        session.trimStart = 0
-        session.trimEnd = playbackDuration
-        seek(to: 0)
-    }
-
-    private func nudgeSelectedTrimHandle(byFrames frames: Int) {
-        guard let trimFrameDuration, trimFrameDuration.isFinite, trimFrameDuration > 0 else { return }
-        let offset = Double(frames) * trimFrameDuration
-        switch session.selectedTrimHandle {
-        case .start:
-            setTrimStart(session.trimStart + offset)
-        case .end:
-            setTrimEnd(session.trimEnd + offset)
-        }
-    }
-
-    private func clampTrimRange(to duration: Double) {
-        let minimumDuration = minimumTrimDuration(for: duration)
-        session.trimStart = min(max(session.trimStart, 0), max(duration - minimumDuration, 0))
-        session.trimEnd = min(max(session.trimEnd, session.trimStart + minimumDuration), duration)
-    }
-
-    private func minimumTrimDuration(for duration: Double) -> Double {
-        0.1
-    }
-
-    private func loadFrameDuration(from asset: AVURLAsset) async throws -> Double? {
-        let tracks = try await asset.loadTracks(withMediaType: .video)
-        guard let track = tracks.first else { return nil }
-
-        let nominalFrameRate = try await track.load(.nominalFrameRate)
-        if nominalFrameRate.isFinite, nominalFrameRate > 0 {
-            return 1.0 / Double(nominalFrameRate)
-        }
-
-        let minimumFrameDuration = try await track.load(.minFrameDuration)
-        let seconds = CMTimeGetSeconds(minimumFrameDuration)
-        guard seconds.isFinite, seconds > 0 else { return nil }
-        return seconds
-    }
-
-    private func updatePlaybackTime() {
-        guard let player else {
-            isPlaying = false
-            return
-        }
-
-        let currentSeconds = CMTimeGetSeconds(player.currentTime())
-        if currentSeconds.isFinite {
-            playbackTime = min(max(currentSeconds, 0), max(playbackDuration, currentSeconds))
-        }
-
-        isPlaying = player.timeControlStatus == .playing
-        if playbackDuration > 0, playbackTime >= playbackDuration - 0.05, player.timeControlStatus != .playing {
-            isPlaying = false
-        }
-    }
-
     private func formatPlaybackTime(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds > 0 else { return "0:00" }
         let wholeSeconds = Int(seconds.rounded(.down))
         return String(format: "%d:%02d", wholeSeconds / 60, wholeSeconds % 60)
-    }
-
-    private func runCrop() {
-        guard let params = cropParameters else { return }
-
-        if let trimRange = selectedTrimRange, session.trimRangeMode == .removeSelection {
-            let out = makeOutputPath(input: session.input, ext: "mp4")
-            let args = removeSelectedRangeArguments(
-                trimRange: trimRange,
-                output: out,
-                cropParameters: hasVisualCrop ? params : nil
-            )
-            runner.run(args: args, inputForDuration: session.input) {
-                session.completedOutput = $0
-                session.markCurrentStateAsBaseline()
-            }
-            return
-        }
-
-        if requiresVideoReencode {
-            let out = makeOutputPath(input: session.input, ext: "mp4")
-            if let trimRange = selectedTrimRange {
-                var args = ["-i", session.input, "-ss", ffmpegTime(trimRange.start), "-t", ffmpegTime(trimRange.end - trimRange.start)]
-                args += reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
-                runner.run(args: args, inputForDuration: session.input) {
-                    session.completedOutput = $0
-                    session.markCurrentStateAsBaseline()
-                }
-            } else {
-                let args = ["-i", session.input] + reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
-                runner.run(args: args, inputForDuration: session.input) {
-                    session.completedOutput = $0
-                    session.markCurrentStateAsBaseline()
-                }
-            }
-            return
-        }
-
-        let out = makeOutputPath(input: session.input, ext: inputExt(session.input))
-        let args: [String]
-        if let trimRange = selectedTrimRange {
-            args = [
-                "-ss", ffmpegTime(trimRange.start),
-                "-i", session.input,
-                "-t", ffmpegTime(trimRange.end - trimRange.start)
-            ] + copyOutputArguments(output: out)
-        } else {
-            args = ["-i", session.input] + copyOutputArguments(output: out)
-        }
-        runner.run(args: args, inputForDuration: session.input) {
-            session.completedOutput = $0
-            session.markCurrentStateAsBaseline()
-        }
-    }
-
-    private func removeSelectedRangeArguments(
-        trimRange: (start: Double, end: Double),
-        output: String,
-        cropParameters: CropParameters?
-    ) -> [String] {
-        let hasAudio = FFmpegRunner.hasAudioStream(session.input)
-        let start = trimRange.start
-        let end = trimRange.end
-
-        if start <= 0.001 {
-            var args = ["-ss", ffmpegTime(end), "-i", session.input]
-            args += reencodedOutputArguments(output: output, cropParameters: cropParameters)
-            return args
-        }
-
-        if playbackDuration > 0, end >= playbackDuration - 0.001 {
-            var args = ["-i", session.input, "-t", ffmpegTime(start)]
-            args += reencodedOutputArguments(output: output, cropParameters: cropParameters)
-            return args
-        }
-
-        var filterParts: [String] = [
-            "[0:v]split=2[v0][v1]",
-            "[v0]trim=start=0:end=\(ffmpegTime(start)),setpts=PTS-STARTPTS[v0t]",
-            "[v1]trim=start=\(ffmpegTime(end)),setpts=PTS-STARTPTS[v1t]",
-            "[v0t][v1t]concat=n=2:v=1:a=0[vbase]"
-        ]
-
-        var videoOutputLabel = "vbase"
-        var videoPostFilters: [String] = []
-        if let cropParameters {
-            videoPostFilters.append("crop=\(cropParameters.width):\(cropParameters.height):\(cropParameters.x):\(cropParameters.y)")
-        }
-        if session.exportPlaybackRate != .normal {
-            let ptsMultiplier = 1.0 / session.exportPlaybackRate.rawValue
-            videoPostFilters.append(String(format: "setpts=%.8f*PTS", ptsMultiplier))
-        }
-        if !videoPostFilters.isEmpty {
-            filterParts.append("[vbase]\(videoPostFilters.joined(separator: ","))[vout]")
-            videoOutputLabel = "vout"
-        }
-
-        var audioOutputLabel: String?
-        if hasAudio {
-            filterParts += [
-                "[0:a]asplit=2[a0][a1]",
-                "[a0]atrim=start=0:end=\(ffmpegTime(start)),asetpts=PTS-STARTPTS[a0t]",
-                "[a1]atrim=start=\(ffmpegTime(end)),asetpts=PTS-STARTPTS[a1t]",
-                "[a0t][a1t]concat=n=2:v=0:a=1[abase]"
-            ]
-
-            if session.exportPlaybackRate != .normal {
-                filterParts.append("[abase]\(audioTempoFilter(for: session.exportPlaybackRate.rawValue))[aout]")
-                audioOutputLabel = "aout"
-            } else {
-                audioOutputLabel = "abase"
-            }
-        }
-
-        var args = ["-i", session.input, "-filter_complex", filterParts.joined(separator: ";"), "-map", "[\(videoOutputLabel)]"]
-        if let audioOutputLabel {
-            args += ["-map", "[\(audioOutputLabel)]", "-c:a", "aac", "-b:a", "192k"]
-        }
-        args += session.exportQuality.videoArguments
-        args += ["-movflags", "+faststart", "-y", output]
-        return args
-    }
-
-    private func reencodedOutputArguments(output: String, cropParameters: CropParameters?) -> [String] {
-        let hasAudio = FFmpegRunner.hasAudioStream(session.input)
-        var args: [String] = ["-map", "0:v:0"]
-        if hasAudio {
-            args += ["-map", "0:a:0"]
-        }
-
-        var videoFilters: [String] = []
-        if let cropParameters {
-            videoFilters.append("crop=\(cropParameters.width):\(cropParameters.height):\(cropParameters.x):\(cropParameters.y)")
-        }
-        if session.exportPlaybackRate != .normal {
-            let ptsMultiplier = 1.0 / session.exportPlaybackRate.rawValue
-            videoFilters.append(String(format: "setpts=%.8f*PTS", ptsMultiplier))
-        }
-        if !videoFilters.isEmpty {
-            args += ["-vf", videoFilters.joined(separator: ",")]
-        }
-        args += session.exportQuality.videoArguments
-        if hasAudio {
-            if session.exportPlaybackRate != .normal {
-                args += ["-af", audioTempoFilter(for: session.exportPlaybackRate.rawValue)]
-            }
-            args += ["-c:a", "aac", "-b:a", "192k"]
-        }
-        args += ["-movflags", "+faststart", "-y", output]
-        return args
-    }
-
-    private func copyOutputArguments(output: String) -> [String] {
-        var args = ["-map", "0", "-c", "copy"]
-        let ext = (output as NSString).pathExtension.lowercased()
-        if ["mp4", "mov", "m4v"].contains(ext) {
-            args += ["-movflags", "+faststart"]
-        }
-        args += ["-y", output]
-        return args
-    }
-
-    private func isFullFrameCrop(_ params: CropParameters) -> Bool {
-        let pixelWidth = Int(previewPixelSize.width.rounded(.down))
-        let pixelHeight = Int(previewPixelSize.height.rounded(.down))
-        guard pixelWidth > 0, pixelHeight > 0 else { return false }
-
-        return abs(params.x) <= 1
-            && abs(params.y) <= 1
-            && abs(params.width - pixelWidth) <= 2
-            && abs(params.height - pixelHeight) <= 2
-    }
-
-    private func audioTempoFilter(for rate: Double) -> String {
-        guard rate.isFinite, rate > 0 else { return "atempo=1.0" }
-
-        var remaining = rate
-        var components: [String] = []
-
-        while remaining > 2.0 {
-            components.append("atempo=2.0")
-            remaining /= 2.0
-        }
-
-        while remaining < 0.5 {
-            components.append("atempo=0.5")
-            remaining /= 0.5
-        }
-
-        if abs(remaining - 1.0) > 0.0001 || components.isEmpty {
-            components.append(String(format: "atempo=%.8f", remaining))
-        }
-
-        return components.joined(separator: ",")
-    }
-
-    private func detectBlackBars() {
-        let requestedPath = session.input
-        guard !requestedPath.isEmpty, previewPixelSize.width > 0, previewPixelSize.height > 0 else { return }
-
-        isDetectingBlackBars = true
-        previewError = ""
-        runner.progress = 0
-        runner.status = L.text(language, "Detecting black bars…", "正在检测黑边…")
-        runner.log = L.text(
-            language,
-            "Detecting black bars with FFmpeg cropdetect…\n",
-            "正在使用 FFmpeg cropdetect 检测黑边…\n"
-        )
-
-        Task {
-            do {
-                let params = try await Self.detectCropParameters(path: requestedPath)
-                guard session.input == requestedPath else { return }
-                session.selectedAspectRatio = "free"
-                session.cropRect = cropRect(from: params)
-                runner.progress = 1
-                runner.status = L.text(language, "Black bars detected ✓", "黑边检测完成 ✓")
-                runner.log += L.text(
-                    language,
-                    "Detected crop: \(params.width)×\(params.height) at x=\(params.x), y=\(params.y)\n",
-                    "检测到裁剪：\(params.width)×\(params.height)，x=\(params.x)，y=\(params.y)\n"
-                )
-            } catch {
-                guard session.input == requestedPath else { return }
-                previewError = L.text(language, "Could not detect black bars.", "无法检测黑边。")
-                runner.status = L.text(language, "Black-bar detection failed", "黑边检测失败")
-                runner.log += "ERROR: \(error.localizedDescription)\n"
-            }
-            if session.input == requestedPath {
-                isDetectingBlackBars = false
-            }
-        }
-    }
-
-    private func loadPreview(for path: String) {
-        let requestedPath = path
-        isLoadingPreview = true
-        previewError = ""
-
-        Task {
-            do {
-                let data = try await Self.generatePreviewFrame(path: requestedPath)
-                guard session.input == requestedPath else { return }
-                guard let image = NSImage(data: data) else {
-                    throw NSError(domain: "SimpleVideo", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not read preview image"])
-                }
-                guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-                    throw NSError(domain: "SimpleVideo", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not read preview dimensions"])
-                }
-                previewImage = image
-                previewPixelSize = CGSize(width: cgImage.width, height: cgImage.height)
-                session.cropRect = adjustedCropRect(session.cropRect, for: selectedAspectRatioOption.ratio)
-            } catch {
-                guard session.input == requestedPath else { return }
-                previewError = L.text(language, "Could not load video preview.", "无法加载视频预览。")
-                runner.log = "ERROR: \(error.localizedDescription)\n"
-            }
-            if session.input == requestedPath {
-                isLoadingPreview = false
-            }
-        }
-    }
-
-    private func evenInt(_ value: CGFloat) -> Int {
-        let integer = max(0, Int(value.rounded(.down)))
-        return integer - (integer % 2)
-    }
-
-    private func defaultCropRect() -> CGRect {
-        CGRect(x: 0, y: 0, width: 1, height: 1)
-    }
-
-    private func adjustedCropRect(_ rect: CGRect, for pixelAspectRatio: CGFloat?) -> CGRect {
-        guard let pixelAspectRatio, pixelAspectRatio > 0,
-              previewPixelSize.width > 0, previewPixelSize.height > 0 else {
-            return clampCropRect(rect)
-        }
-
-        let normalizedAspect = pixelAspectRatio / (previewPixelSize.width / previewPixelSize.height)
-        var width = min(rect.width, 0.96)
-        var height = width / normalizedAspect
-
-        if height > 0.96 {
-            height = min(rect.height, 0.96)
-            width = height * normalizedAspect
-        }
-
-        if width > 0.96 {
-            width = 0.96
-            height = width / normalizedAspect
-        }
-        if height > 0.96 {
-            height = 0.96
-            width = height * normalizedAspect
-        }
-
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        return clampCropRect(CGRect(
-            x: center.x - width / 2,
-            y: center.y - height / 2,
-            width: width,
-            height: height
-        ))
-    }
-
-    private func clampCropRect(_ rect: CGRect) -> CGRect {
-        let minSize: CGFloat = 0.03
-        let width = min(max(rect.width, minSize), 1)
-        let height = min(max(rect.height, minSize), 1)
-        let x = min(max(rect.minX, 0), 1 - width)
-        let y = min(max(rect.minY, 0), 1 - height)
-        return CGRect(x: x, y: y, width: width, height: height)
-    }
-
-    private func cropRect(from params: CropParameters) -> CGRect {
-        guard previewPixelSize.width > 0, previewPixelSize.height > 0 else {
-            return session.cropRect
-        }
-        return clampCropRect(CGRect(
-            x: CGFloat(params.x) / previewPixelSize.width,
-            y: CGFloat(params.y) / previewPixelSize.height,
-            width: CGFloat(params.width) / previewPixelSize.width,
-            height: CGFloat(params.height) / previewPixelSize.height
-        ))
     }
 }
