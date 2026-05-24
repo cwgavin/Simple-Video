@@ -8,7 +8,19 @@ extension CropVideoView {
     }
 
     func startPreviewSession(for path: String, resetTrimRange: Bool, preservePlaybackState: Bool = false) {
-        cleanupPreviewProxy()
+        cleanupPreviewProxy(removeFile: false, clearCache: false)
+
+        if let cachedProxyPath = cachedPreviewProxyPath(for: path) {
+            previewProxyPath = cachedProxyPath
+            setupPlayback(
+                previewPath: cachedProxyPath,
+                metadataPath: path,
+                resetTrimRange: resetTrimRange,
+                preservePlaybackState: preservePlaybackState
+            )
+            return
+        }
+
         setupPlayback(
             previewPath: path,
             metadataPath: path,
@@ -136,6 +148,7 @@ extension CropVideoView {
             }
 
             let requiresProxy = await Self.requiresPreviewProxy(path: path)
+            let sourceFingerprint = Self.previewSourceFingerprint(path: path)
             guard !Task.isCancelled else { return }
 
             if !requiresProxy {
@@ -170,6 +183,8 @@ extension CropVideoView {
                     guard session.input == path, proxyGenerationID == requestID else { return false }
                     previewProxyPath = proxyPath
                     CropPreviewArtifacts.register(proxyPath)
+                    session.cachedPreviewProxyPath = proxyPath
+                    session.cachedPreviewSourceFingerprint = sourceFingerprint
                     proxyGenerationProcess = nil
                     isGeneratingPreviewProxy = false
                     return true
@@ -223,6 +238,10 @@ extension CropVideoView {
     }
 
     func cleanupPreviewProxy() {
+        cleanupPreviewProxy(removeFile: true, clearCache: true)
+    }
+
+    func cleanupPreviewProxy(removeFile: Bool, clearCache: Bool) {
         proxyGenerationID &+= 1
         proxyGenerationTask?.cancel()
         proxyGenerationTask = nil
@@ -233,17 +252,61 @@ extension CropVideoView {
         proxyGenerationProcess = nil
 
         if let previewProxyPath {
-            CropPreviewArtifacts.unregister(previewProxyPath)
-            try? FileManager.default.removeItem(atPath: previewProxyPath)
+            if removeFile {
+                CropPreviewArtifacts.unregister(previewProxyPath)
+                try? FileManager.default.removeItem(atPath: previewProxyPath)
+            }
         }
         previewProxyPath = nil
         previewPlaybackMode = .original
         isGeneratingPreviewProxy = false
+
+        if clearCache {
+            discardCachedPreviewProxy()
+        }
     }
 
-    func cleanupPreviewSession(resetState: Bool = false, resetTrimRange: Bool = false) {
+    func cleanupPreviewSession(
+        resetState: Bool = false,
+        resetTrimRange: Bool = false,
+        keepCachedProxy: Bool = false
+    ) {
         cleanupPlayback(resetState: resetState, resetTrimRange: resetTrimRange)
-        cleanupPreviewProxy()
+        cleanupPreviewProxy(removeFile: !keepCachedProxy, clearCache: !keepCachedProxy)
+    }
+
+    func discardCachedPreviewProxy() {
+        if let cachedPath = session.cachedPreviewProxyPath {
+            CropPreviewArtifacts.unregister(cachedPath)
+            try? FileManager.default.removeItem(atPath: cachedPath)
+        }
+        session.cachedPreviewProxyPath = nil
+        session.cachedPreviewSourceFingerprint = nil
+    }
+
+    func cachedPreviewProxyPath(for path: String) -> String? {
+        guard let currentFingerprint = Self.previewSourceFingerprint(path: path),
+              let cachedPath = session.cachedPreviewProxyPath,
+              let cachedFingerprint = session.cachedPreviewSourceFingerprint,
+              currentFingerprint == cachedFingerprint,
+              FileManager.default.fileExists(atPath: cachedPath) else {
+            discardCachedPreviewProxy()
+            return nil
+        }
+        return cachedPath
+    }
+
+    static func previewSourceFingerprint(path: String) -> CropPreviewSourceFingerprint? {
+        guard !path.isEmpty else { return nil }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        let fileSize = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+        let modificationTime = (attributes?[.modificationDate] as? Date)?
+            .timeIntervalSinceReferenceDate ?? 0
+        return CropPreviewSourceFingerprint(
+            path: path,
+            fileSize: fileSize,
+            modificationTime: modificationTime
+        )
     }
 
     func togglePlayback() {

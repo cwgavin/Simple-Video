@@ -252,7 +252,7 @@ struct CropVideoView: View {
                 session.isShowingStandaloneEditor = false
             }
             session.previewPlaybackTime = playbackTime
-            cleanupPreviewSession()
+            cleanupPreviewSession(keepCachedProxy: true)
         }
         .onChange(of: isActive) { _, active in
             if active {
@@ -264,10 +264,11 @@ struct CropVideoView: View {
                 }
             } else {
                 session.previewPlaybackTime = playbackTime
-                cleanupPreviewSession()
+                cleanupPreviewSession(keepCachedProxy: true)
             }
         }
         .onChange(of: session.input) { _, newValue in
+            discardCachedPreviewProxy()
             session.clearPendingChangesBaseline()
             session.completedOutput = ""
             session.previewPlaybackTime = 0

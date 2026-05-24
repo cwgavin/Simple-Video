@@ -18,6 +18,12 @@ enum CropPreviewPlaybackMode {
     case compatibilityProxy
 }
 
+struct CropPreviewSourceFingerprint: Equatable {
+    let path: String
+    let fileSize: UInt64
+    let modificationTime: TimeInterval
+}
+
 enum CropPlaybackRateOption: Double, CaseIterable, Identifiable {
     case half = 0.5
     case threeQuarter = 0.75
@@ -198,6 +204,8 @@ final class CropVideoSession: ObservableObject {
     @Published var trimRangeMode: CropTrimRangeMode = .exportSelection
     @Published var isShowingStandaloneEditor = false
     @Published var standaloneEditorActivationID: UInt = 0
+    var cachedPreviewProxyPath: String?
+    var cachedPreviewSourceFingerprint: CropPreviewSourceFingerprint?
     private var baselineState: BaselineState?
 
     var hasPendingChanges: Bool {
