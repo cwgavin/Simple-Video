@@ -21,10 +21,10 @@ extension CropAudioView {
         let hasExactTrim = selectedTrimRange != nil
         let needsReencode = hasExactTrim || session.exportPlaybackRate != .normal || !isDefaultExportVolume
         let outputExtension = normalizedOutputExtension()
-        let out = makeOutputPath(
+        guard let out = makeOutputPath(
             input: session.input,
             ext: needsReencode ? outputExtension : inputExt(session.input)
-        )
+        ) else { return }
 
         let args: [String]
         if needsReencode {

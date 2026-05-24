@@ -20,7 +20,7 @@ struct MergeAVView: View {
             OutputHintRow(path: completedOutput)
             RunButton(canRun: !video.isEmpty && !audio.isEmpty) {
                 completedOutput = ""
-                let out = makeOutputPath(input: video, ext: inputExt(video))
+                guard let out = makeOutputPath(input: video, ext: inputExt(video)) else { return }
                 runner.run(args: ["-i", video, "-i", audio,
                                   "-map", "0:v:0", "-map", "1:a:0",
                                   "-c:v", "copy", "-c:a", "aac",

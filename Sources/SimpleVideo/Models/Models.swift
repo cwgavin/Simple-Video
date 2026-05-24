@@ -67,6 +67,28 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 enum AppStorageKey {
     static let showLogPanel = "showLogPanel"
     static let iconOnlyButtons = "iconOnlyButtons"
+    static let outputPathMode = "outputPathMode"
+    static let outputDirectory = "outputDirectory"
+    static let cropVideoExportQuality = "cropVideoExportQuality"
+}
+
+enum OutputPathMode: String, CaseIterable, Identifiable {
+    case sameAsInput
+    case fixedDirectory
+    case askEveryRun
+
+    var id: String { rawValue }
+
+    func title(language: AppLanguage) -> String {
+        switch self {
+        case .sameAsInput:
+            return L.text(language, "Same folder as input", "与输入文件同目录")
+        case .fixedDirectory:
+            return L.text(language, "Use a fixed folder", "使用固定目录")
+        case .askEveryRun:
+            return L.text(language, "Choose folder on every run", "每次运行时手动选择目录")
+        }
+    }
 }
 
 enum L {

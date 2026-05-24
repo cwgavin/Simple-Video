@@ -64,7 +64,7 @@ struct SplitByTimestampsView: View {
             return
         }
 
-        let outputDirectory = makeOutputDirectory(input: input, label: "segments")
+        guard let outputDirectory = makeOutputDirectory(input: input, label: "segments") else { return }
         do {
             try FileManager.default.createDirectory(
                 atPath: outputDirectory,

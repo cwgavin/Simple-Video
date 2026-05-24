@@ -23,7 +23,7 @@ extension CropVideoView {
         let needsAudioVolumeAdjustment = hasAudio && !isDefaultExportVolume
 
         if let trimRange = selectedTrimRange, session.trimRangeMode == .removeSelection {
-            let out = makeOutputPath(input: session.input, ext: "mp4")
+            guard let out = makeOutputPath(input: session.input, ext: "mp4") else { return }
             let args = removeSelectedRangeArguments(
                 trimRange: trimRange,
                 output: out,
@@ -37,7 +37,7 @@ extension CropVideoView {
         }
 
         if requiresVideoReencode || needsAudioVolumeAdjustment {
-            let out = makeOutputPath(input: session.input, ext: "mp4")
+            guard let out = makeOutputPath(input: session.input, ext: "mp4") else { return }
             if let trimRange = selectedTrimRange {
                 var args = ["-i", session.input, "-ss", ffmpegTime(trimRange.start), "-t", ffmpegTime(trimRange.end - trimRange.start)]
                 args += reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
@@ -55,7 +55,7 @@ extension CropVideoView {
             return
         }
 
-        let out = makeOutputPath(input: session.input, ext: inputExt(session.input))
+        guard let out = makeOutputPath(input: session.input, ext: inputExt(session.input)) else { return }
         let args: [String]
         if let trimRange = selectedTrimRange {
             args = [

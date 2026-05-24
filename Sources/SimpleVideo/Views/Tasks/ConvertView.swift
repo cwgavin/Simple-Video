@@ -86,7 +86,7 @@ struct ConvertView: View {
 
     private func runConversion() {
         completedOutput = ""
-        let out = makeOutputPath(input: input, ext: outputFormat)
+        guard let out = makeOutputPath(input: input, ext: outputFormat) else { return }
         let args = mediaType == "video"
             ? videoFFmpegArgs(input: input, output: out)
             : audioFFmpegArgs(input: input, output: out)

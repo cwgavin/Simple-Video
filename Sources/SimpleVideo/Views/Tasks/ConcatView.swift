@@ -258,7 +258,7 @@ struct ConcatView: View {
                     if session.mediaType == "video" {
                         let inputs = (0..<n).map { "[\($0):v][\($0):a]" }.joined()
                         let filter = "\(inputs)concat=n=\(n):v=1:a=1[outv][outa]"
-                        let out = makeOutputPath(input: session.files[0], ext: "mp4")
+                        guard let out = makeOutputPath(input: session.files[0], ext: "mp4") else { return }
                         args += ["-filter_complex", filter,
                                  "-map", "[outv]", "-map", "[outa]",
                                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
@@ -266,7 +266,7 @@ struct ConcatView: View {
                     } else {
                         let inputs = (0..<n).map { "[\($0):a]" }.joined()
                         let filter = "\(inputs)concat=n=\(n):v=0:a=1[outa]"
-                        let out = makeOutputPath(input: session.files[0], ext: "m4a")
+                        guard let out = makeOutputPath(input: session.files[0], ext: "m4a") else { return }
                         args += ["-filter_complex", filter,
                                  "-map", "[outa]",
                                  "-c:a", "aac", "-b:a", "192k", "-y", out]
@@ -279,7 +279,10 @@ struct ConcatView: View {
                         .joined(separator: "\n")
                     try? listing.write(toFile: tmp, atomically: true, encoding: .utf8)
 
-                    let out = makeOutputPath(input: session.files[0], ext: inputExt(session.files[0]))
+                    guard let out = makeOutputPath(input: session.files[0], ext: inputExt(session.files[0])) else {
+                        try? FileManager.default.removeItem(atPath: tmp)
+                        return
+                    }
                     runner.run(
                         args: ["-f", "concat", "-safe", "0", "-i", tmp,
                                "-c", "copy", "-y", out],

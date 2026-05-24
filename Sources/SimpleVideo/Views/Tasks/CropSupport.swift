@@ -200,7 +200,14 @@ final class CropVideoSession: ObservableObject {
     @Published var trimEnd: Double = 0
     @Published var previewPlaybackTime: Double = 0
     @Published var selectedTrimHandle: TrimHandleSelection = .start
-    @Published var exportQuality = CropExportQualityOption.balanced
+    @Published var exportQuality: CropExportQualityOption = {
+        let raw = UserDefaults.standard.string(forKey: AppStorageKey.cropVideoExportQuality) ?? ""
+        return CropExportQualityOption(rawValue: raw) ?? .balanced
+    }() {
+        didSet {
+            UserDefaults.standard.set(exportQuality.rawValue, forKey: AppStorageKey.cropVideoExportQuality)
+        }
+    }
     @Published var exportPlaybackRate = CropPlaybackRateOption.normal
     @Published var exportVolume: Double = 1.0
     @Published var trimRangeMode: CropTrimRangeMode = .exportSelection

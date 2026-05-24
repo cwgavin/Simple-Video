@@ -15,6 +15,17 @@ enum Files {
         }
         return panel.runModal() == .OK ? panel.url?.path : nil
     }
+
+    static func openDirectory(initialDirectory: String? = nil) -> String? {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        if let initialDirectory, !initialDirectory.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: initialDirectory)
+        }
+        return panel.runModal() == .OK ? panel.url?.path : nil
+    }
 }
 
 // MARK: - Common UI bits
@@ -23,23 +34,45 @@ enum Files {
 /// so collisions are effectively impossible.
 /// Example: `/Users/me/Movies/clip.mov`, ext `mp4`
 ///       → `/Users/me/Movies/20260426-001234-567.mp4`
-func makeOutputPath(input: String, ext: String) -> String {
-    let url = URL(fileURLWithPath: input)
-    let dir = url.deletingLastPathComponent().path
+func makeOutputPath(input: String, ext: String) -> String? {
+    guard let dir = resolveOutputBaseDirectory(input: input) else { return nil }
     let fmt = DateFormatter()
     fmt.dateFormat = "yyyyMMdd-HHmmss-SSS"
     let stamp = fmt.string(from: Date())
     return "\(dir)/\(stamp).\(ext)"
 }
 
-func makeOutputDirectory(input: String, label: String) -> String {
+func makeOutputDirectory(input: String, label: String) -> String? {
+    guard let dir = resolveOutputBaseDirectory(input: input) else { return nil }
     let url = URL(fileURLWithPath: input)
-    let dir = url.deletingLastPathComponent().path
     let baseName = url.deletingPathExtension().lastPathComponent
     let fmt = DateFormatter()
     fmt.dateFormat = "yyyyMMdd-HHmmss-SSS"
     let stamp = fmt.string(from: Date())
     return "\(dir)/\(baseName)-\(label)-\(stamp)"
+}
+
+private func resolveOutputBaseDirectory(input: String) -> String? {
+    let url = URL(fileURLWithPath: input)
+    let inputDirectory = url.deletingLastPathComponent().path
+    let defaults = UserDefaults.standard
+    let mode = OutputPathMode(rawValue: defaults.string(forKey: AppStorageKey.outputPathMode) ?? "")
+        ?? .sameAsInput
+
+    switch mode {
+    case .sameAsInput:
+        return inputDirectory
+    case .fixedDirectory:
+        let configuredDirectory = defaults.string(forKey: AppStorageKey.outputDirectory) ?? ""
+        guard !configuredDirectory.isEmpty else { return inputDirectory }
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: configuredDirectory, isDirectory: &isDirectory), isDirectory.boolValue {
+            return configuredDirectory
+        }
+        return inputDirectory
+    case .askEveryRun:
+        return Files.openDirectory(initialDirectory: inputDirectory)
+    }
 }
 
 func inputExt(_ path: String) -> String {

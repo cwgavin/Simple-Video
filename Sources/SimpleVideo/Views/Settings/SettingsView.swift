@@ -4,9 +4,36 @@ struct SettingsView: View {
     @AppStorage("appLanguage") private var appLanguageRaw = AppLanguage.english.rawValue
     @AppStorage(AppStorageKey.showLogPanel) private var showLogPanel = false
     @AppStorage(AppStorageKey.iconOnlyButtons) private var iconOnlyButtons = false
+    @AppStorage(AppStorageKey.outputPathMode) private var outputPathModeRaw = OutputPathMode.sameAsInput.rawValue
+    @AppStorage(AppStorageKey.outputDirectory) private var outputDirectoryPath = ""
 
     private var language: AppLanguage {
         AppLanguage(rawValue: appLanguageRaw) ?? .english
+    }
+
+    private var outputPathMode: OutputPathMode {
+        OutputPathMode(rawValue: outputPathModeRaw) ?? .sameAsInput
+    }
+
+    private var outputPathModeBinding: Binding<OutputPathMode> {
+        Binding(
+            get: { outputPathMode },
+            set: { outputPathModeRaw = $0.rawValue }
+        )
+    }
+
+    private var outputDirectoryDisplayName: String {
+        guard !outputDirectoryPath.isEmpty else {
+            return L.text(language, "Not selected", "未选择")
+        }
+        return (outputDirectoryPath as NSString).lastPathComponent
+    }
+
+    private func chooseOutputDirectory() {
+        let initial = outputDirectoryPath.isEmpty ? nil : outputDirectoryPath
+        if let path = Files.openDirectory(initialDirectory: initial) {
+            outputDirectoryPath = path
+        }
     }
 
     private func licenseLink(_ title: String, _ url: String) -> some View {
@@ -52,6 +79,33 @@ struct SettingsView: View {
                         Toggle("", isOn: $iconOnlyButtons)
                             .toggleStyle(.switch)
                             .pointingHandCursor()
+                    }
+                    HStack(alignment: .top) {
+                        Text(L.text(language, "Output path:", "输出路径："))
+                            .frame(width: formLabelWidth, alignment: .trailing)
+                        Picker("", selection: outputPathModeBinding) {
+                            ForEach(OutputPathMode.allCases) { mode in
+                                Text(mode.title(language: language)).tag(mode)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        .pointingHandCursor()
+                    }
+                    if outputPathMode == .fixedDirectory {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(L.text(language, "Default folder:", "默认目录："))
+                                .frame(width: formLabelWidth, alignment: .trailing)
+                            Text(outputDirectoryDisplayName)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(outputDirectoryPath)
+                            Button(L.text(language, "Choose…", "选择…")) {
+                                chooseOutputDirectory()
+                            }
+                            .pointingHandCursor()
+                            Spacer(minLength: 0)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
