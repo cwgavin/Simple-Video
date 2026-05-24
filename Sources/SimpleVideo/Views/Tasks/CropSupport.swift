@@ -186,6 +186,7 @@ final class CropVideoSession: ObservableObject {
         let trimStart: Double
         let trimEnd: Double
         let trimRangeMode: CropTrimRangeMode
+        let exportVolume: Double
     }
 
     private static let fullFrameCropRect = CGRect(x: 0, y: 0, width: 1, height: 1)
@@ -201,6 +202,7 @@ final class CropVideoSession: ObservableObject {
     @Published var selectedTrimHandle: TrimHandleSelection = .start
     @Published var exportQuality = CropExportQualityOption.balanced
     @Published var exportPlaybackRate = CropPlaybackRateOption.normal
+    @Published var exportVolume: Double = 1.0
     @Published var trimRangeMode: CropTrimRangeMode = .exportSelection
     @Published var isShowingStandaloneEditor = false
     @Published var standaloneEditorActivationID: UInt = 0
@@ -216,6 +218,7 @@ final class CropVideoSession: ObservableObject {
             || abs(current.trimStart - baselineState.trimStart) > Self.comparisonTolerance
             || abs(current.trimEnd - baselineState.trimEnd) > Self.comparisonTolerance
             || current.trimRangeMode != baselineState.trimRangeMode
+            || abs(current.exportVolume - baselineState.exportVolume) > Self.comparisonTolerance
     }
 
     func resetCropSelection() {
@@ -241,7 +244,8 @@ final class CropVideoSession: ObservableObject {
             cropRect: cropRect,
             trimStart: trimStart,
             trimEnd: trimEnd,
-            trimRangeMode: trimRangeMode
+            trimRangeMode: trimRangeMode,
+            exportVolume: exportVolume
         )
     }
 }
@@ -252,6 +256,7 @@ final class CropAudioSession: ObservableObject {
         let trimStart: Double
         let trimEnd: Double
         let trimRangeMode: CropTrimRangeMode
+        let exportVolume: Double
     }
 
     @Published var input = ""
@@ -261,6 +266,7 @@ final class CropAudioSession: ObservableObject {
     @Published var previewPlaybackTime: Double = 0
     @Published var selectedTrimHandle: TrimHandleSelection = .start
     @Published var exportPlaybackRate = CropPlaybackRateOption.normal
+    @Published var exportVolume: Double = 1.0
     @Published var trimRangeMode: CropTrimRangeMode = .exportSelection
     private var baselineState: BaselineState?
 
@@ -271,6 +277,7 @@ final class CropAudioSession: ObservableObject {
             || abs(current.trimStart - baselineState.trimStart) > CropVideoSession.comparisonTolerance
             || abs(current.trimEnd - baselineState.trimEnd) > CropVideoSession.comparisonTolerance
             || current.trimRangeMode != baselineState.trimRangeMode
+            || abs(current.exportVolume - baselineState.exportVolume) > CropVideoSession.comparisonTolerance
     }
 
     func clearPendingChangesBaseline() {
@@ -290,7 +297,8 @@ final class CropAudioSession: ObservableObject {
             input: input,
             trimStart: trimStart,
             trimEnd: trimEnd,
-            trimRangeMode: trimRangeMode
+            trimRangeMode: trimRangeMode,
+            exportVolume: exportVolume
         )
     }
 }

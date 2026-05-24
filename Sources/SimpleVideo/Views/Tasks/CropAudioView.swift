@@ -77,6 +77,13 @@ struct CropAudioView: View {
         )
     }
 
+    private var exportVolumeBinding: Binding<Double> {
+        Binding(
+            get: { session.exportVolume },
+            set: { session.exportVolume = min(max($0, 0), 2) }
+        )
+    }
+
     private var trimRangeSummary: String {
         let duration = max(session.trimEnd - session.trimStart, 0)
         return L.text(
@@ -104,6 +111,14 @@ struct CropAudioView: View {
 
     private var canStopTrimPreview: Bool {
         isPreviewingTrim
+    }
+
+    private var exportVolumeSummary: String {
+        L.text(
+            language,
+            String(format: "%.0f%%", session.exportVolume * 100),
+            String(format: "%.0f%%", session.exportVolume * 100)
+        )
     }
 
     private var playbackControlsDisabled: Bool {
@@ -197,6 +212,9 @@ struct CropAudioView: View {
         }
         .onChange(of: playbackTime) { _, newValue in
             session.previewPlaybackTime = max(newValue, 0)
+        }
+        .onChange(of: session.exportVolume) { _, _ in
+            applyPreviewVolume()
         }
     }
 
@@ -393,7 +411,7 @@ struct CropAudioView: View {
     @ViewBuilder
     private var exportControls: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 8) {
                 Picker(
                     L.text(language, "Playback rate", "播放倍率"),
                     selection: exportPlaybackRateBinding
@@ -405,13 +423,38 @@ struct CropAudioView: View {
                 .labelsHidden()
                 .fixedSize()
                 .pointingHandCursor()
+                Text(L.text(language, "Volume", "音量"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Image(systemName: "speaker.wave.1.fill")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Slider(
+                    value: exportVolumeBinding,
+                    in: 0...2
+                )
+                .frame(maxWidth: 180)
+                .pointingHandCursor()
+                Image(systemName: "speaker.wave.3.fill")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(exportVolumeSummary)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .leading)
+                Button(L.text(language, "Reset volume", "重置音量")) {
+                    session.exportVolume = 1.0
+                }
+                .disabled(abs(session.exportVolume - 1.0) <= 0.0001)
+                .pointingHandCursor(enabled: abs(session.exportVolume - 1.0) > 0.0001)
                 Spacer()
             }
 
             Text(L.text(
                 language,
-                "Preview playback uses this rate, and exported audio keeps the same playback speed.",
-                "预览播放会使用这个倍率，导出音频也会保持相同的播放速度。"
+                "Preview playback uses this rate. Export applies both the selected speed and volume.",
+                "预览播放会使用这个倍率，导出时会同时应用所选速度和音量。"
             ))
             .font(.caption)
             .foregroundColor(.secondary)

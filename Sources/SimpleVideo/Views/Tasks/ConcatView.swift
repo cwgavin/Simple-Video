@@ -232,6 +232,7 @@ struct ConcatView: View {
 
             OutputHintRow(path: session.completedOutput)
             RunButton(canRun: session.files.count >= 2) {
+                session.completedOutput = ""
                 let exts = Set(session.files.map { inputExt($0).lowercased() })
                 let mixed = exts.count > 1
 

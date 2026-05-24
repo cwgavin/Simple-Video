@@ -53,6 +53,7 @@ struct SplitByTimestampsView: View {
     }
 
     private func runSplit() {
+        completedOutput = ""
         let parsed: [Double]
         switch parseTimestampList(timestamps) {
         case .success(let values):

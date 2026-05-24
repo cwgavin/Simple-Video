@@ -1,8 +1,26 @@
 import SwiftUI
 
 extension CropVideoView {
+    private var isDefaultExportVolume: Bool {
+        abs(session.exportVolume - 1.0) <= 0.0001
+    }
+
+    private func audioExportFilters() -> [String] {
+        var filters: [String] = []
+        if session.exportPlaybackRate != .normal {
+            filters.append(audioTempoFilter(for: session.exportPlaybackRate.rawValue))
+        }
+        if !isDefaultExportVolume {
+            filters.append(audioVolumeFilter(for: session.exportVolume))
+        }
+        return filters
+    }
+
     func runCrop() {
         guard let params = cropParameters else { return }
+        session.completedOutput = ""
+        let hasAudio = FFmpegRunner.hasAudioStream(session.input)
+        let needsAudioVolumeAdjustment = hasAudio && !isDefaultExportVolume
 
         if let trimRange = selectedTrimRange, session.trimRangeMode == .removeSelection {
             let out = makeOutputPath(input: session.input, ext: "mp4")
@@ -18,7 +36,7 @@ extension CropVideoView {
             return
         }
 
-        if requiresVideoReencode {
+        if requiresVideoReencode || needsAudioVolumeAdjustment {
             let out = makeOutputPath(input: session.input, ext: "mp4")
             if let trimRange = selectedTrimRange {
                 var args = ["-i", session.input, "-ss", ffmpegTime(trimRange.start), "-t", ffmpegTime(trimRange.end - trimRange.start)]
@@ -105,8 +123,9 @@ extension CropVideoView {
                 "[a0t][a1t]concat=n=2:v=0:a=1[abase]"
             ]
 
-            if session.exportPlaybackRate != .normal {
-                filterParts.append("[abase]\(audioTempoFilter(for: session.exportPlaybackRate.rawValue))[aout]")
+            let exportFilters = audioExportFilters()
+            if !exportFilters.isEmpty {
+                filterParts.append("[abase]\(exportFilters.joined(separator: ","))[aout]")
                 audioOutputLabel = "aout"
             } else {
                 audioOutputLabel = "abase"
@@ -142,8 +161,9 @@ extension CropVideoView {
         }
         args += session.exportQuality.videoArguments
         if hasAudio {
-            if session.exportPlaybackRate != .normal {
-                args += ["-af", audioTempoFilter(for: session.exportPlaybackRate.rawValue)]
+            let exportFilters = audioExportFilters()
+            if !exportFilters.isEmpty {
+                args += ["-af", exportFilters.joined(separator: ",")]
             }
             args += ["-c:a", "aac", "-b:a", "192k"]
         }
@@ -182,5 +202,9 @@ extension CropVideoView {
         }
 
         return components.joined(separator: ",")
+    }
+
+    func audioVolumeFilter(for volume: Double) -> String {
+        String(format: "volume=%.8f", max(volume, 0))
     }
 }

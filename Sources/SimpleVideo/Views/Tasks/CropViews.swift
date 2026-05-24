@@ -92,7 +92,9 @@ struct CropVideoView: View {
     }
 
     var requiresVideoReencode: Bool {
-        hasVisualCrop || selectedTrimRange != nil || session.exportPlaybackRate != .normal
+        hasVisualCrop
+            || selectedTrimRange != nil
+            || session.exportPlaybackRate != .normal
     }
 
     private var inputBinding: Binding<String> {
@@ -155,6 +157,13 @@ struct CropVideoView: View {
         Binding(
             get: { session.exportPlaybackRate },
             set: { session.exportPlaybackRate = $0 }
+        )
+    }
+
+    private var exportVolumeBinding: Binding<Double> {
+        Binding(
+            get: { session.exportVolume },
+            set: { session.exportVolume = min(max($0, 0), 2) }
         )
     }
 
@@ -293,6 +302,9 @@ struct CropVideoView: View {
         .onChange(of: playbackTime) { _, newValue in
             session.previewPlaybackTime = max(newValue, 0)
         }
+        .onChange(of: session.exportVolume) { _, _ in
+            applyPreviewVolume()
+        }
     }
 
     private var embeddedBody: some View {
@@ -423,8 +435,13 @@ struct CropVideoView: View {
             }
 
             OutputHintRow(path: session.completedOutput)
-            RunButton(canRun: !session.input.isEmpty && previewImage != nil && cropParameters != nil && !isLoadingPreview) {
-                runCrop()
+            HStack(alignment: .center, spacing: 8) {
+                Spacer()
+                exportQualityPicker
+                RunButton(canRun: !session.input.isEmpty && previewImage != nil && cropParameters != nil && !isLoadingPreview) {
+                    runCrop()
+                }
+                .fixedSize()
             }
             Spacer()
         }
@@ -627,6 +644,40 @@ struct CropVideoView: View {
         isPreviewingTrim
     }
 
+    private var exportVolumeSummary: String {
+        L.text(
+            language,
+            String(format: "%.0f%%", session.exportVolume * 100),
+            String(format: "%.0f%%", session.exportVolume * 100)
+        )
+    }
+
+    private var hasSelectedInput: Bool {
+        !session.input.isEmpty
+    }
+
+    @ViewBuilder
+    private var exportQualityPicker: some View {
+        HStack(spacing: 6) {
+            Text(L.text(language, "Quality", "画质"))
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Picker(
+                L.text(language, "Export quality", "导出画质"),
+                selection: exportQualityBinding
+            ) {
+                ForEach(CropExportQualityOption.allCases) { option in
+                    Text(option.title(language: language)).tag(option)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .disabled(!hasSelectedInput)
+            .pointingHandCursor(enabled: hasSelectedInput)
+        }
+        .padding(.top, 6)
+    }
+
     var playbackRate: Float {
         Float(session.exportPlaybackRate.rawValue)
     }
@@ -634,7 +685,7 @@ struct CropVideoView: View {
     @ViewBuilder
     private var exportControls: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 8) {
                 Picker(
                     L.text(language, "Playback rate", "播放倍率"),
                     selection: exportPlaybackRateBinding
@@ -645,77 +696,44 @@ struct CropVideoView: View {
                 }
                 .labelsHidden()
                 .fixedSize()
-                .pointingHandCursor()
+                .disabled(!hasSelectedInput)
+                .pointingHandCursor(enabled: hasSelectedInput)
+                Text(L.text(language, "Volume", "音量"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Image(systemName: "speaker.wave.1.fill")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Slider(
+                    value: exportVolumeBinding,
+                    in: 0...2
+                )
+                .frame(maxWidth: 180)
+                .disabled(!hasSelectedInput)
+                .pointingHandCursor(enabled: hasSelectedInput)
+                Image(systemName: "speaker.wave.3.fill")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(exportVolumeSummary)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .leading)
+                Button(L.text(language, "Reset volume", "重置音量")) {
+                    session.exportVolume = 1.0
+                }
+                .disabled(!hasSelectedInput || abs(session.exportVolume - 1.0) <= 0.0001)
+                .pointingHandCursor(enabled: hasSelectedInput && abs(session.exportVolume - 1.0) > 0.0001)
                 Spacer()
             }
 
             Text(L.text(
                 language,
-                "Preview playback uses this rate, and the exported video keeps the same playback speed.",
-                "预览播放会使用这个倍率，导出视频也会保持相同的播放速度。"
+                "Preview playback uses this rate. Export applies both the selected speed and volume.",
+                "预览播放会使用这个倍率，导出时会同时应用所选速度和音量。"
             ))
             .font(.caption)
             .foregroundColor(.secondary)
-
-            if hasVisualCrop {
-                HStack {
-                    Picker(
-                        L.text(language, "Export quality", "导出画质"),
-                        selection: exportQualityBinding
-                    ) {
-                        ForEach(CropExportQualityOption.allCases) { option in
-                            Text(option.title(language: language)).tag(option)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    .pointingHandCursor()
-                    Spacer()
-                }
-
-                Text(session.exportQuality.summary(language: language))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else if selectedTrimRange != nil {
-                HStack {
-                    Picker(
-                        L.text(language, "Export quality", "导出画质"),
-                        selection: exportQualityBinding
-                    ) {
-                        ForEach(CropExportQualityOption.allCases) { option in
-                            Text(option.title(language: language)).tag(option)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    .pointingHandCursor()
-                    Spacer()
-                    }
-
-                    Text(session.exportQuality.summary(language: language))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-            } else if session.exportPlaybackRate != .normal {
-                HStack {
-                    Picker(
-                        L.text(language, "Export quality", "导出画质"),
-                        selection: exportQualityBinding
-                    ) {
-                        ForEach(CropExportQualityOption.allCases) { option in
-                            Text(option.title(language: language)).tag(option)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    .pointingHandCursor()
-                    Spacer()
-                }
-
-                Text(session.exportQuality.summary(language: language))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else {
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

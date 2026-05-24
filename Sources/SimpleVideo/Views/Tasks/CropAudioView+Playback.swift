@@ -33,6 +33,7 @@ extension CropAudioView {
         let item = AVPlayerItem(asset: asset)
         let newPlayer = AVPlayer(playerItem: item)
         newPlayer.actionAtItemEnd = .pause
+        applyPreviewVolume(to: newPlayer)
         player = newPlayer
         playbackTime = preservedTime
         isPreviewingTrim = shouldKeepTrimPreview
@@ -159,6 +160,17 @@ extension CropAudioView {
     func startPlayback(using player: AVPlayer) {
         player.playImmediately(atRate: playbackRate)
         isPlaying = true
+    }
+
+    func applyPreviewVolume() {
+        guard let player else { return }
+        applyPreviewVolume(to: player)
+    }
+
+    private func applyPreviewVolume(to player: AVPlayer) {
+        let clamped = max(session.exportVolume, 0)
+        player.isMuted = clamped <= 0.0001
+        player.volume = Float(clamped)
     }
 
     func seek(to seconds: Double, cancelTrimPreview: Bool = true) {

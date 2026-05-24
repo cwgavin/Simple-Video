@@ -1,9 +1,25 @@
 import SwiftUI
 
 extension CropAudioView {
+    private var isDefaultExportVolume: Bool {
+        abs(session.exportVolume - 1.0) <= 0.0001
+    }
+
+    private func audioExportFilters() -> [String] {
+        var filters: [String] = []
+        if session.exportPlaybackRate != .normal {
+            filters.append(cropAudioTempoFilter(for: session.exportPlaybackRate.rawValue))
+        }
+        if !isDefaultExportVolume {
+            filters.append(audioVolumeFilter(for: session.exportVolume))
+        }
+        return filters
+    }
+
     func runCropAudio() {
+        session.completedOutput = ""
         let hasExactTrim = selectedTrimRange != nil
-        let needsReencode = hasExactTrim || session.exportPlaybackRate != .normal
+        let needsReencode = hasExactTrim || session.exportPlaybackRate != .normal || !isDefaultExportVolume
         let outputExtension = normalizedOutputExtension()
         let out = makeOutputPath(
             input: session.input,
@@ -64,8 +80,9 @@ extension CropAudioView {
         ]
 
         var outputLabel = "abase"
-        if session.exportPlaybackRate != .normal {
-            filterParts.append("[abase]\(cropAudioTempoFilter(for: session.exportPlaybackRate.rawValue))[aout]")
+        let exportFilters = audioExportFilters()
+        if !exportFilters.isEmpty {
+            filterParts.append("[abase]\(exportFilters.joined(separator: ","))[aout]")
             outputLabel = "aout"
         }
 
@@ -84,8 +101,9 @@ extension CropAudioView {
     func reencodedAudioOutputArguments(output: String) -> [String] {
         var args = ["-map", "0:a:0"]
 
-        if session.exportPlaybackRate != .normal {
-            args += ["-af", cropAudioTempoFilter(for: session.exportPlaybackRate.rawValue)]
+        let exportFilters = audioExportFilters()
+        if !exportFilters.isEmpty {
+            args += ["-af", exportFilters.joined(separator: ",")]
         }
 
         args += reencodedAudioEncodingArguments(for: output)
@@ -118,5 +136,9 @@ extension CropAudioView {
             args += ["-c:a", "aac", "-b:a", "192k"]
         }
         return args
+    }
+
+    func audioVolumeFilter(for volume: Double) -> String {
+        String(format: "volume=%.8f", max(volume, 0))
     }
 }

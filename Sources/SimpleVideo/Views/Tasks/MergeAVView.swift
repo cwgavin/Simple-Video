@@ -19,6 +19,7 @@ struct MergeAVView: View {
             FilePickerRow(label: L.text(language, "Audio file:", "音频文件："), path: $audio, contentTypes: [.audio, .movie, .audiovisualContent])
             OutputHintRow(path: completedOutput)
             RunButton(canRun: !video.isEmpty && !audio.isEmpty) {
+                completedOutput = ""
                 let out = makeOutputPath(input: video, ext: inputExt(video))
                 runner.run(args: ["-i", video, "-i", audio,
                                   "-map", "0:v:0", "-map", "1:a:0",
