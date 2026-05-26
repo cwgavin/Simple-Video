@@ -21,13 +21,17 @@ extension CropVideoView {
         session.completedOutput = ""
         let hasAudio = FFmpegRunner.hasAudioStream(session.input)
         let needsAudioVolumeAdjustment = hasAudio && !isDefaultExportVolume
+        let canExportOriginalQuality = !requiresVideoReencode
+        let prefersOriginalQuality = canExportOriginalQuality && session.exportQuality == .original
+        let reencodeQuality: CropExportQualityOption = session.exportQuality == .original ? .balanced : session.exportQuality
 
         if let trimRange = selectedTrimRange, session.trimRangeMode == .removeSelection {
             guard let out = makeOutputPath(input: session.input, ext: "mp4") else { return }
             let args = removeSelectedRangeArguments(
                 trimRange: trimRange,
                 output: out,
-                cropParameters: hasVisualCrop ? params : nil
+                cropParameters: hasVisualCrop ? params : nil,
+                quality: reencodeQuality
             )
             runner.run(args: args, inputForDuration: session.input) {
                 session.completedOutput = $0
@@ -36,21 +40,39 @@ extension CropVideoView {
             return
         }
 
-        if requiresVideoReencode || needsAudioVolumeAdjustment {
+        if requiresVideoReencode || !prefersOriginalQuality {
             guard let out = makeOutputPath(input: session.input, ext: "mp4") else { return }
             if let trimRange = selectedTrimRange {
                 var args = ["-i", session.input, "-ss", ffmpegTime(trimRange.start), "-t", ffmpegTime(trimRange.end - trimRange.start)]
-                args += reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
+                args += reencodedOutputArguments(
+                    output: out,
+                    cropParameters: hasVisualCrop ? params : nil,
+                    quality: reencodeQuality
+                )
                 runner.run(args: args, inputForDuration: session.input) {
                     session.completedOutput = $0
                     session.markCurrentStateAsBaseline()
                 }
             } else {
-                let args = ["-i", session.input] + reencodedOutputArguments(output: out, cropParameters: hasVisualCrop ? params : nil)
+                let args = ["-i", session.input] + reencodedOutputArguments(
+                    output: out,
+                    cropParameters: hasVisualCrop ? params : nil,
+                    quality: reencodeQuality
+                )
                 runner.run(args: args, inputForDuration: session.input) {
                     session.completedOutput = $0
                     session.markCurrentStateAsBaseline()
                 }
+            }
+            return
+        }
+
+        if needsAudioVolumeAdjustment {
+            guard let out = makeOutputPath(input: session.input, ext: inputExt(session.input)) else { return }
+            let args = copyVideoWithFilteredAudioArguments(output: out)
+            runner.run(args: args, inputForDuration: session.input) {
+                session.completedOutput = $0
+                session.markCurrentStateAsBaseline()
             }
             return
         }
@@ -75,7 +97,8 @@ extension CropVideoView {
     func removeSelectedRangeArguments(
         trimRange: (start: Double, end: Double),
         output: String,
-        cropParameters: CropParameters?
+        cropParameters: CropParameters?,
+        quality: CropExportQualityOption
     ) -> [String] {
         let hasAudio = FFmpegRunner.hasAudioStream(session.input)
         let start = trimRange.start
@@ -83,13 +106,13 @@ extension CropVideoView {
 
         if start <= 0.001 {
             var args = ["-ss", ffmpegTime(end), "-i", session.input]
-            args += reencodedOutputArguments(output: output, cropParameters: cropParameters)
+            args += reencodedOutputArguments(output: output, cropParameters: cropParameters, quality: quality)
             return args
         }
 
         if playbackDuration > 0, end >= playbackDuration - 0.001 {
             var args = ["-i", session.input, "-t", ffmpegTime(start)]
-            args += reencodedOutputArguments(output: output, cropParameters: cropParameters)
+            args += reencodedOutputArguments(output: output, cropParameters: cropParameters, quality: quality)
             return args
         }
 
@@ -136,12 +159,45 @@ extension CropVideoView {
         if let audioOutputLabel {
             args += ["-map", "[\(audioOutputLabel)]", "-c:a", "aac", "-b:a", "192k"]
         }
-        args += session.exportQuality.videoArguments
+        args += quality.videoArguments
         args += ["-movflags", "+faststart", "-y", output]
         return args
     }
 
-    func reencodedOutputArguments(output: String, cropParameters: CropParameters?) -> [String] {
+    func copyVideoWithFilteredAudioArguments(output: String) -> [String] {
+        var args: [String] = ["-i", session.input, "-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy"]
+
+        let exportFilters = audioExportFilters()
+        if !exportFilters.isEmpty {
+            args += ["-af", exportFilters.joined(separator: ",")]
+        }
+
+        args += filteredAudioEncodingArguments(for: output)
+        let ext = (output as NSString).pathExtension.lowercased()
+        if ["mp4", "mov", "m4v"].contains(ext) {
+            args += ["-movflags", "+faststart"]
+        }
+        args += ["-y", output]
+        return args
+    }
+
+    func filteredAudioEncodingArguments(for output: String) -> [String] {
+        let ext = (output as NSString).pathExtension.lowercased()
+        switch ext {
+        case "webm":
+            return ["-c:a", "libopus", "-b:a", "128k"]
+        case "avi":
+            return ["-c:a", "libmp3lame", "-b:a", "192k"]
+        default:
+            return ["-c:a", "aac", "-b:a", "192k"]
+        }
+    }
+
+    func reencodedOutputArguments(
+        output: String,
+        cropParameters: CropParameters?,
+        quality: CropExportQualityOption
+    ) -> [String] {
         let hasAudio = FFmpegRunner.hasAudioStream(session.input)
         var args: [String] = ["-map", "0:v:0"]
         if hasAudio {
@@ -159,7 +215,7 @@ extension CropVideoView {
         if !videoFilters.isEmpty {
             args += ["-vf", videoFilters.joined(separator: ",")]
         }
-        args += session.exportQuality.videoArguments
+        args += quality.videoArguments
         if hasAudio {
             let exportFilters = audioExportFilters()
             if !exportFilters.isEmpty {

@@ -77,10 +77,17 @@ struct CropAudioView: View {
         )
     }
 
-    private var exportVolumeBinding: Binding<Double> {
+    private var exportVolumeSliderBinding: Binding<Double> {
         Binding(
-            get: { session.exportVolume },
-            set: { session.exportVolume = min(max($0, 0), 2) }
+            get: { exportVolumeSliderValue(for: session.exportVolume) },
+            set: { session.exportVolume = exportVolumeSliderValue(for: $0) }
+        )
+    }
+
+    private var exportVolumeStepBinding: Binding<Double> {
+        Binding(
+            get: { exportVolumeBoostStep(for: session.exportVolume) },
+            set: { session.exportVolume = min(max($0.rounded(), 1), 5) }
         )
     }
 
@@ -121,6 +128,10 @@ struct CropAudioView: View {
         )
     }
 
+    private var hasSelectedInput: Bool {
+        !session.input.isEmpty
+    }
+
     private var playbackControlsDisabled: Bool {
         playbackDuration <= 0
     }
@@ -158,7 +169,7 @@ struct CropAudioView: View {
             }
 
             HStack(alignment: .top) {
-                Text(L.text(language, "Export mode:", "导出方式："))
+                Text(L.text(language, "Advanced:", "高级选项："))
                     .frame(width: formLabelWidth, alignment: .trailing)
                 exportControls
             }
@@ -422,7 +433,8 @@ struct CropAudioView: View {
                 }
                 .labelsHidden()
                 .fixedSize()
-                .pointingHandCursor()
+                .disabled(!hasSelectedInput)
+                .pointingHandCursor(enabled: hasSelectedInput)
                 Text(L.text(language, "Volume", "音量"))
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -430,11 +442,12 @@ struct CropAudioView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Slider(
-                    value: exportVolumeBinding,
-                    in: 0...2
+                    value: exportVolumeSliderBinding,
+                    in: 0...1
                 )
                 .frame(maxWidth: 180)
-                .pointingHandCursor()
+                .disabled(!hasSelectedInput)
+                .pointingHandCursor(enabled: hasSelectedInput)
                 Image(systemName: "speaker.wave.3.fill")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -443,21 +456,28 @@ struct CropAudioView: View {
                     .foregroundColor(.secondary)
                     .monospacedDigit()
                     .frame(width: 44, alignment: .leading)
+                Text(L.text(language, "Boost", "增益档位"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.leading, -8)
+                Picker(
+                    L.text(language, "Boost", "增益档位"),
+                    selection: exportVolumeStepBinding
+                ) {
+                    ForEach(exportVolumeBoostSteps, id: \.self) { option in
+                        Text(exportVolumeBoostTitle(for: option, language: language)).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .disabled(!hasSelectedInput)
+                .pointingHandCursor(enabled: hasSelectedInput)
                 Button(L.text(language, "Reset volume", "重置音量")) {
                     session.exportVolume = 1.0
                 }
-                .disabled(abs(session.exportVolume - 1.0) <= 0.0001)
-                .pointingHandCursor(enabled: abs(session.exportVolume - 1.0) > 0.0001)
+                .disabled(!hasSelectedInput || abs(session.exportVolume - 1.0) <= 0.0001)
+                .pointingHandCursor(enabled: hasSelectedInput && abs(session.exportVolume - 1.0) > 0.0001)
                 Spacer()
             }
-
-            Text(L.text(
-                language,
-                "Preview playback uses this rate. Export applies both the selected speed and volume.",
-                "预览播放会使用这个倍率，导出时会同时应用所选速度和音量。"
-            ))
-            .font(.caption)
-            .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

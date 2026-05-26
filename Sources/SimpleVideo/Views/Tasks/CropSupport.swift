@@ -123,6 +123,7 @@ enum CropPreviewArtifacts {
 }
 
 enum CropExportQualityOption: String, CaseIterable, Identifiable {
+    case original
     case highest
     case balanced
     case smaller
@@ -131,6 +132,8 @@ enum CropExportQualityOption: String, CaseIterable, Identifiable {
 
     func title(language: AppLanguage) -> String {
         switch self {
+        case .original:
+            return L.text(language, "Original quality", "原始画质")
         case .highest:
             return L.text(language, "Highest quality", "最高画质")
         case .balanced:
@@ -142,6 +145,8 @@ enum CropExportQualityOption: String, CaseIterable, Identifiable {
 
     func summary(language: AppLanguage) -> String {
         switch self {
+        case .original:
+            return L.text(language, "Keeps original video stream when available.", "可用时保持原始视频流。")
         case .highest:
             return L.text(language, "Slower export, less visible recompression.", "导出更慢，重编码痕迹更少。")
         case .balanced:
@@ -153,6 +158,8 @@ enum CropExportQualityOption: String, CaseIterable, Identifiable {
 
     var videoArguments: [String] {
         switch self {
+        case .original:
+            return CropExportQualityOption.balanced.videoArguments
         case .highest:
             return ["-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv420p"]
         case .balanced:
@@ -161,6 +168,27 @@ enum CropExportQualityOption: String, CaseIterable, Identifiable {
             return ["-c:v", "libx264", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p"]
         }
     }
+}
+
+let exportVolumeBoostSteps: [Double] = [1, 2, 3, 4, 5]
+
+func exportVolumeSliderValue(for volume: Double) -> Double {
+    min(max(volume, 0), 1)
+}
+
+func exportVolumeBoostStep(for volume: Double) -> Double {
+    let clamped = min(max(volume, 0), 5)
+    guard clamped > 1.0001 else { return 1 }
+    for step in exportVolumeBoostSteps.dropFirst() where abs(clamped - step) <= 0.0001 {
+        return step
+    }
+    return 1
+}
+
+func exportVolumeBoostTitle(for step: Double, language: AppLanguage) -> String {
+    step == 1
+        ? L.text(language, "No boost", "无增益")
+        : "\(Int(step * 100))%"
 }
 
 struct CropAspectRatioOption: Identifiable, Hashable {

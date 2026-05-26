@@ -148,7 +148,9 @@ struct CropVideoView: View {
 
     private var exportQualityBinding: Binding<CropExportQualityOption> {
         Binding(
-            get: { session.exportQuality },
+            get: {
+                availableExportQualityOptions.contains(session.exportQuality) ? session.exportQuality : .balanced
+            },
             set: { session.exportQuality = $0 }
         )
     }
@@ -160,10 +162,17 @@ struct CropVideoView: View {
         )
     }
 
-    private var exportVolumeBinding: Binding<Double> {
+    private var exportVolumeSliderBinding: Binding<Double> {
         Binding(
-            get: { session.exportVolume },
-            set: { session.exportVolume = min(max($0, 0), 2) }
+            get: { exportVolumeSliderValue(for: session.exportVolume) },
+            set: { session.exportVolume = exportVolumeSliderValue(for: $0) }
+        )
+    }
+
+    private var exportVolumeStepBinding: Binding<Double> {
+        Binding(
+            get: { exportVolumeBoostStep(for: session.exportVolume) },
+            set: { session.exportVolume = min(max($0.rounded(), 1), 5) }
         )
     }
 
@@ -429,7 +438,7 @@ struct CropVideoView: View {
             }
 
             HStack(alignment: .top) {
-                Text(L.text(language, "Export mode:", "导出方式："))
+                Text(L.text(language, "Advanced:", "高级选项："))
                     .frame(width: formLabelWidth, alignment: .trailing)
                 exportControls
             }
@@ -656,6 +665,17 @@ struct CropVideoView: View {
         !session.input.isEmpty
     }
 
+    private var canOfferOriginalQualityOption: Bool {
+        !requiresVideoReencode
+    }
+
+    private var availableExportQualityOptions: [CropExportQualityOption] {
+        if canOfferOriginalQualityOption {
+            return [.original, .highest, .balanced, .smaller]
+        }
+        return [.highest, .balanced, .smaller]
+    }
+
     @ViewBuilder
     private var exportQualityPicker: some View {
         HStack(spacing: 6) {
@@ -666,7 +686,7 @@ struct CropVideoView: View {
                 L.text(language, "Export quality", "导出画质"),
                 selection: exportQualityBinding
             ) {
-                ForEach(CropExportQualityOption.allCases) { option in
+                ForEach(availableExportQualityOptions) { option in
                     Text(option.title(language: language)).tag(option)
                 }
             }
@@ -705,8 +725,8 @@ struct CropVideoView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Slider(
-                    value: exportVolumeBinding,
-                    in: 0...2
+                    value: exportVolumeSliderBinding,
+                    in: 0...1
                 )
                 .frame(maxWidth: 180)
                 .disabled(!hasSelectedInput)
@@ -719,6 +739,21 @@ struct CropVideoView: View {
                     .foregroundColor(.secondary)
                     .monospacedDigit()
                     .frame(width: 44, alignment: .leading)
+                Text(L.text(language, "Boost", "增益档位"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.leading, -8)
+                Picker(
+                    L.text(language, "Boost", "增益档位"),
+                    selection: exportVolumeStepBinding
+                ) {
+                    ForEach(exportVolumeBoostSteps, id: \.self) { option in
+                        Text(exportVolumeBoostTitle(for: option, language: language)).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .disabled(!hasSelectedInput)
+                .pointingHandCursor(enabled: hasSelectedInput)
                 Button(L.text(language, "Reset volume", "重置音量")) {
                     session.exportVolume = 1.0
                 }
@@ -726,14 +761,6 @@ struct CropVideoView: View {
                 .pointingHandCursor(enabled: hasSelectedInput && abs(session.exportVolume - 1.0) > 0.0001)
                 Spacer()
             }
-
-            Text(L.text(
-                language,
-                "Preview playback uses this rate. Export applies both the selected speed and volume.",
-                "预览播放会使用这个倍率，导出时会同时应用所选速度和音量。"
-            ))
-            .font(.caption)
-            .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
